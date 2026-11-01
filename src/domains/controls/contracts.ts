@@ -1,0 +1,16 @@
+import { z } from "zod";
+export const controlDomains = ["Ledger", "Stock", "Returns", "Rejections", "Payroll", "Payroll Policy"] as const;
+export const approvalStates = ["Submitted", "Verified", "Approved", "Rejected", "Posted"] as const;
+export const controlMoney = z.string().regex(/^(0|[1-9]\d{0,21})(\.\d{1,2})?$/, "Use a non-negative decimal amount with at most two decimal places");
+const people = z.array(z.string().min(1).max(100)).min(1).max(30).refine((v) => new Set(v).size === v.length, "Choose each employee once");
+export const approvalPolicyInput = z.object({ domain: z.enum(controlDomains), name: z.string().trim().min(3).max(120), effectiveFrom: z.iso.date(), maximumAmountBdt: controlMoney, verifierIds: people, approverIds: people, independentVerifier: z.boolean(), proofReference: z.string().trim().min(3).max(200) }).strict();
+export const approvalActionInput = z.object({ version: z.number().int().positive(), reason: z.string().trim().min(5).max(1000) }).strict();
+export const approvalPageInput = z.object({ page: z.coerce.number().int().min(1).max(10000).default(1), state: z.enum(approvalStates).optional(), domain: z.enum(controlDomains).optional() }).strict();
+export type ApprovalPolicyData = z.infer<typeof approvalPolicyInput>;
+export type ControlDomain = typeof controlDomains[number];
+export const approvalSchema = z.object({ id: z.string(), domain: z.enum(controlDomains), resourceType: z.string(), resourceId: z.string(), sourcePath: z.string().optional(), excludedActorIds: z.array(z.string()).default([]), reference: z.string(), amountBdt: z.string(), state: z.enum(approvalStates), version: z.number().int(), requestedBy: z.string(), requestedByName: z.string(), verifiedBy: z.string().nullable(), approvedBy: z.string().nullable(), verifiedAsSuperAdmin: z.boolean().default(false), approvedAsSuperAdmin: z.boolean().default(false), createdAt: z.string(), policy: approvalPolicyInput, policyVersion: z.number().int(), policyActive: z.boolean() });
+export type ApprovalDto = z.infer<typeof approvalSchema>;
+export const approvalPageSchema = z.object({ rows: z.array(approvalSchema), total: z.number().int(), page: z.number().int(), pageSize: z.number().int() });
+export const approvalEventSchema = z.object({ id: z.string(), actor: z.string(), action: z.string(), reason: z.string(), version: z.number().int(), at: z.string() });
+export const policyRowSchema = z.object({ id: z.string(), domain: z.enum(controlDomains), data: approvalPolicyInput, state: z.enum(["Draft", "Approved", "Retired"]), version: z.number().int(), createdBy: z.string(), approvedBy: z.string().nullable() });
+export const policyListSchema = z.object({ rows: z.array(policyRowSchema), people: z.array(z.object({ id: z.string(), name: z.string(), role: z.string() })) });

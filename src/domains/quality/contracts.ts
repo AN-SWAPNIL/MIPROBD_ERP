@@ -1,0 +1,11 @@
+import { z } from "zod";
+import { attachmentMimes, attachmentMetadataMatches } from "../../lib/files/attachments.js";
+export const qualityKinds=["Stock Control","Customer Return","Supplier Claim","Supplier Replacement Receipt"] as const;
+export const qualityKind=z.enum(qualityKinds);
+export type QualityKind=z.infer<typeof qualityKind>;
+export const qualityFileInput=z.object({version:z.number().int().positive(),fileName:z.string().trim().min(1).max(180).refine(v=>!/[\\/]/.test(v)&&![...v].some(c=>c.charCodeAt(0)<32),"Invalid file name"),mimeType:z.enum(attachmentMimes),sizeBytes:z.number().int().min(1).max(5*1024*1024),sensitive:z.boolean().default(false)}).strict().refine(v=>attachmentMetadataMatches(v.fileName,v.mimeType),"File name and authorized type must match");
+export const qualityWithdrawal=z.object({version:z.number().int().positive(),reason:z.string().trim().min(5).max(500)}).strict();
+export const qualityFileSchema=z.object({id:z.uuid(),fileName:z.string(),mimeType:z.string(),sizeBytes:z.number(),sha256:z.string().nullable(),sensitive:z.boolean(),uploadedBy:z.string(),uploadedByName:z.string(),createdAt:z.string(),state:z.enum(["Pending","Attached","Expired","Withdrawn"]),inherited:z.boolean(),reason:z.string().nullable()});
+export const qualityEvidenceSchema=z.object({kind:qualityKind,sourceId:z.string(),reference:z.string(),state:z.string(),version:z.number().int(),canEdit:z.boolean(),sealed:z.boolean(),sealHash:z.string().nullable(),restrictedFiles:z.number().int(),files:z.array(qualityFileSchema)});
+export const qualityUploadSchema=z.object({id:z.uuid(),signedUrl:z.url(),expiresAt:z.string()});
+export type QualityEvidence=z.infer<typeof qualityEvidenceSchema>;

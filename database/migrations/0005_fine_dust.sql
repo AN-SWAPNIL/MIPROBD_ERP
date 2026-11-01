@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "import_lc_lower_unique" ON "erp_private"."import_cases" USING btree (nullif(lower(btrim("commercial"->>'lcNumber')), ''));

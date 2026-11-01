@@ -1,21 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  Activity,
   ArrowRight,
+  BarChart3,
   Banknote,
   Boxes,
   CircleDollarSign,
   Clock3,
   FileDown,
+  FilePlus2,
+  MapPinned,
   ReceiptText,
-  ShoppingCart
+  ShoppingCart,
+  UserPlus,
+  UsersRound
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useState } from "react";
 import PageHeader from "../../components/ui/PageHeader";
+import AIRecommendationCard from "../../components/ai/AIRecommendationCard";
 import StatusBadge from "../../components/ui/StatusBadge";
 import { ErrorBlock, LoadingBlock, Panel, TableFrame } from "../../domains/components";
-import { dashboardService } from "../../domains/services";
+import { aiService, dashboardService } from "../../domains/services";
 import { useAuthStore } from "../../lib/auth/session";
+import { canAccessEmployeeHub, hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
 import { formatCurrency, formatNumber } from "../../utils/format";
 
 const metricIcons = { sales: ShoppingCart, collection: CircleDollarSign, due: Banknote, expense: ReceiptText, stock: Boxes, imports: FileDown, accounts: Banknote, pi: FileDown, shipment: FileDown, costing: CircleDollarSign, receiving: Boxes, batches: Boxes, expiry: AlertTriangle, dispatch: ShoppingCart, pipeline: ShoppingCart, quotes: ReceiptText };
@@ -23,11 +32,53 @@ const metricTones = ["border-blue-700", "border-cyan-600", "border-amber-500", "
 
 export default function DashboardPage() {
   const session = useAuthStore((state) => state.session);
+  const [dismissed, setDismissed] = useState<string[]>([]);
   const query = useQuery({ queryKey: ["dashboard", session?.user.id], queryFn: dashboardService.get });
+  const recommendationsQuery = useQuery({ queryKey: ["ai", "dashboard", session?.user.id], queryFn: () => aiService.recommendations({ route: "/app/dashboard", entityType: "dashboard" }) });
 
   if (query.isLoading) return <LoadingBlock label="Preparing your role dashboard" />;
   if (query.isError || !query.data) return <ErrorBlock error={query.error} onRetry={() => void query.refetch()} />;
   const data = query.data;
+  const user = session?.user;
+  const quickCandidates = user?.role === "Sales Executive"
+    ? [
+        { label: "Report Activity", path: "/app/sales?view=marketing&action=activity", icon: Activity, allowed: hasEffectivePermission(user, "marketing", "create") },
+        { label: "New Lead", path: "/app/sales?view=marketing&action=lead", icon: UserPlus, allowed: hasEffectivePermission(user, "marketing", "create") },
+        { label: "New Quotation", path: "/app/sales?view=orders&action=quotation", icon: FilePlus2, allowed: hasEffectivePermission(user, "sales", "create") },
+        { label: "My Reports", path: "/app/reports/daily-marketing?preset=my-day", icon: BarChart3, allowed: hasEffectivePermission(user, "reports", "view") }
+      ]
+    : user?.role === "Sales Manager"
+      ? [
+          { label: "Open Marketing", path: "/app/sales?view=marketing", icon: Activity, allowed: hasEffectivePermission(user, "marketing", "view") },
+          { label: "Employees", path: "/app/employees?view=activity", icon: UsersRound, allowed: canAccessEmployeeHub(user) },
+          { label: "Generate Report", path: "/app/reports/daily-marketing?preset=month", icon: BarChart3, allowed: hasEffectivePermission(user, "reports", "view") },
+          { label: "New Quotation", path: "/app/sales?view=orders&action=quotation", icon: FilePlus2, allowed: hasEffectivePermission(user, "sales", "create") }
+        ]
+      : user?.role === "Accounts"
+        ? [
+            { label: "Post Expense", path: "/app/accounts?view=expenses&action=expense", icon: ReceiptText, allowed: hasEffectivePermission(user, "accounts", "post") },
+            { label: "Post Collection", path: "/app/sales?view=collections&action=collection", icon: Banknote, allowed: hasEffectivePermission(user, "sales", "post") },
+            { label: "Customer Dues", path: "/app/accounts?view=dues", icon: CircleDollarSign, allowed: hasEffectivePermission(user, "accounts", "view") },
+            { label: "Reports", path: "/app/reports", icon: BarChart3, allowed: hasEffectivePermission(user, "reports", "view") }
+          ]
+        : user?.role === "Import Officer"
+          ? [
+              { label: "New Import", path: "/app/imports/new", icon: FilePlus2, allowed: hasEffectivePermission(user, "import", "create") },
+              { label: "Import Register", path: "/app/imports", icon: FileDown, allowed: hasEffectivePermission(user, "import", "view") },
+              { label: "Reports", path: "/app/reports", icon: BarChart3, allowed: hasEffectivePermission(user, "reports", "view") }
+            ]
+          : user?.role === "Warehouse Manager"
+            ? [
+                { label: "Inventory", path: "/app/inventory", icon: Boxes, allowed: hasEffectivePermission(user, "inventory", "view") },
+                { label: "Receive Finalized Import", path: "/app/imports", icon: FileDown, allowed: hasEffectivePermission(user, "import", "view") }
+              ]
+            : [
+                { label: "New Import", path: "/app/imports/new", icon: FilePlus2, allowed: hasEffectivePermission(user, "import", "create") },
+                { label: "Open Marketing", path: "/app/sales?view=marketing", icon: Activity, allowed: hasEffectivePermission(user, "marketing", "view") },
+                { label: "Employees", path: "/app/employees", icon: UsersRound, allowed: canAccessEmployeeHub(user) },
+                { label: "Generate Report", path: "/app/reports", icon: BarChart3, allowed: hasEffectivePermission(user, "reports", "view") }
+              ];
+  const quickActions = quickCandidates.filter((action) => action.allowed).slice(0, 4);
 
   return (
     <>
@@ -37,6 +88,8 @@ export default function DashboardPage() {
         subtitle="Today's operational position, filtered to the records and amounts your role is allowed to see."
         actions={<span className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Connected API</span>}
       />
+
+      {quickActions.length ? <section className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center" aria-label="Quick actions"><span className="shrink-0 text-xs font-bold uppercase text-slate-500">Quick actions</span><div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:flex sm:flex-wrap">{quickActions.map((action) => { const Icon = action.icon; return <Link className="inline-flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-cyan-400 hover:text-blue-950" to={action.path} key={action.label}><Icon className="h-4 w-4 shrink-0 text-cyan-700" /><span className="truncate">{action.label}</span></Link>; })}</div></section> : null}
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6" aria-label="Key performance indicators">
         {data.metrics.slice(0, 6).map((metric, index) => {
@@ -56,6 +109,10 @@ export default function DashboardPage() {
           );
         })}
       </section>
+
+      {data.marketing ? <section className="overflow-hidden rounded-md border border-cyan-200 bg-white shadow-sm" aria-label={data.marketing.title}><div className="flex flex-col gap-3 bg-cyan-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded bg-blue-950 text-cyan-300"><Activity className="h-5 w-5" /></span><div><strong className="block text-sm text-slate-950">{data.marketing.title}</strong><p className="text-xs text-slate-600">Daily activity, follow-ups, field status and connected sales outcomes</p></div></div><Link className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-blue-950 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-900" to={data.marketing.actionPath}><MapPinned className="h-4 w-4" />Open Marketing</Link></div><div className="grid grid-cols-2 divide-x divide-y divide-slate-100 sm:grid-cols-3 xl:grid-cols-6">{data.marketing.metrics.map((metric) => <div className="min-w-0 p-3" key={metric.id}><span className="block truncate text-[10px] font-bold uppercase text-slate-400">{metric.label}</span><strong className={`mt-1 block break-words text-lg ${metric.id === "overdue" && Number(metric.value) ? "text-rose-700" : "text-slate-950"}`}>{metric.unit === "BDT" ? formatCurrency(metric.value, true) : formatNumber(metric.value)}</strong><small className="text-[10px] text-slate-400">{metric.unit}</small></div>)}</div></section> : null}
+
+      {recommendationsQuery.data?.some((item) => !dismissed.includes(item.id)) ? <section aria-label="Smart operational alerts"><div className="mb-2 flex items-center justify-between gap-3"><div><h2 className="text-sm font-bold text-slate-950">Smart operational alerts</h2><p className="text-xs text-slate-500">Rule-backed priorities from the same records shown below</p></div><Link className="inline-flex shrink-0 items-center gap-1 text-sm font-bold text-cyan-800 hover:underline" to="/app/insights">View All Insights <ArrowRight className="h-4 w-4" /></Link></div><div className="grid gap-3 lg:grid-cols-2">{recommendationsQuery.data.filter((item) => !dismissed.includes(item.id)).slice(0, 2).map((item) => <AIRecommendationCard recommendation={item} onDismiss={() => setDismissed((current) => [...current, item.id])} key={item.id} />)}</div></section> : null}
 
       {data.importAttention.length || data.expiryAlerts.length ? <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
         {data.importAttention.length ? <Panel title="Action queue" subtitle="Records needing the next operational step">

@@ -1,31 +1,51 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "installCommand": "npm ci",
+  "outputDirectory": "dist",
+  "regions": ["bom1"],
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 60,
+      "includeFiles": "server/assets/**"
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(self), geolocation=(self), microphone=()" },
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.supabase.co; frame-src 'self' blob:; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests" }
+      ]
+    },
+    { "source": "/backend/:path*", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }, { "key": "Cache-Control", "value": "private, no-store" }] },
+    { "source": "/app/:path*", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }, { "key": "Cache-Control", "value": "private, no-store" }] },
+    { "source": "/api/:path*", "headers": [{ "key": "Cache-Control", "value": "private, no-store" }, { "key": "X-Robots-Tag", "value": "noindex, nofollow" }] }
+  ],
+  "redirects": [
+    { "source": "/signup", "destination": "/login", "permanent": false },
+    { "source": "/blog", "destination": "/news", "statusCode": 301 },
+    { "source": "/blog/:path*", "destination": "/news", "statusCode": 301 },
+    { "source": "/product/blood-tubing-set-for-hemodialysis", "destination": "/products/blood-tubing-set-for-hemodialysis", "statusCode": 301 },
+    { "source": "/product/disposable-a-v-fistula-needle", "destination": "/products/disposable-a-v-fistula-needle", "statusCode": 301 },
+    { "source": "/product/disposable-medical-protective-clothing", "destination": "/products/disposable-medical-protective-clothing", "statusCode": 301 },
+    { "source": "/product/disposable-medical-protective-mask-n95", "destination": "/products/disposable-medical-protective-mask-n95", "statusCode": 301 },
+    { "source": "/product/flash-back-needle", "destination": "/products/flashback-needle", "statusCode": 301 },
+    { "source": "/product/hollow-fiber-hemodialyzerhigh-flux", "destination": "/products/hollow-fiber-hemodialyzer-high-low-flux", "statusCode": 301 },
+    { "source": "/product/iv-catheter-pen-type", "destination": "/products/iv-catheter-pen-type", "statusCode": 301 },
+    { "source": "/product/single-use-tracheostomy-intubation", "destination": "/products/single-use-tracheostomy-intubation", "statusCode": 301 }
+  ],
   "rewrites": [
     {
       "source": "/api/:path*",
       "destination": "/api?path=:path*"
     },
     {
-      "source": "/app/(.*)",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/login",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/signin",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/signup",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/forgot-password",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/reset-password",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]

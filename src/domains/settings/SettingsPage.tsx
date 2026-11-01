@@ -6,6 +6,7 @@ import {
   Database,
   ExternalLink,
   FileQuestion,
+  Gauge,
   Image as ImageIcon,
   Link2,
   PackagePlus,
@@ -14,22 +15,20 @@ import {
   Printer,
   Ruler,
   Save,
-  ShieldCheck,
   Tags,
   Trash2,
   Warehouse
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import Avatar from "../../components/ui/Avatar";
 import Button from "../../components/ui/Button";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import PageHeader from "../../components/ui/PageHeader";
 import StatusBadge from "../../components/ui/StatusBadge";
 import { businessDate } from "../../lib/date";
 import { useToastStore } from "../../lib/ui/toast";
-import type { Role, User } from "../../types";
-import { roles } from "../../types";
+import { hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
+import { useAuthStore } from "../../lib/auth/session";
 import { formatCurrency, formatNumber } from "../../utils/format";
 import {
   ErrorBlock,
@@ -46,11 +45,11 @@ import {
 import type {
   AllocationMethod,
   BusinessDecision,
-  Capability,
   CashBankAccount,
   CostPreset,
   Customer,
   CustomerOpeningBalance,
+  MarketingScoreRule,
   PrintConfiguration,
   PrintIdentity,
   Product,
@@ -59,23 +58,13 @@ import type {
   Supplier,
   WarehouseConfig
 } from "../erp.types";
-import { accountsService, inventoryService, salesService, settingsService } from "../services";
+import { accountsService, inventoryService, marketingService, salesService, settingsService } from "../services";
+import WebsiteContentWorkspace from "./WebsiteContentWorkspace";
 
-type View = "decisions" | "users" | "products" | "suppliers" | "business" | "migration";
-type ModalType = "decision" | "user" | "product" | "alias" | "supplier" | "account" | "warehouse" | "preset" | "print" | "category" | "opening" | "customer-opening" | null;
+type View = "decisions" | "products" | "suppliers" | "business" | "migration" | "website";
+type ModalType = "decision" | "product" | "alias" | "supplier" | "account" | "warehouse" | "preset" | "print" | "category" | "opening" | "customer-opening" | null;
 type Task = { run: () => Promise<unknown>; success: string };
 type DeleteTarget = { type: "product" | "supplier" | "account" | "preset" | "alias"; id: string; label: string };
-
-const capabilityOptions: ReadonlyArray<readonly [Capability, string]> = [
-  ["view_sensitive_cost", "View sensitive import cost"],
-  ["edit_sensitive_cost", "Edit sensitive import cost"],
-  ["finalize_landed_cost", "Finalize landed cost"],
-  ["reopen_landed_cost", "Reopen landed cost"],
-  ["view_profit", "View selling-profit information"],
-  ["approve_stock_override", "Approve FIFO override"],
-  ["manage_users", "Manage users"],
-  ["approve_special_price", "Approve special price"]
-];
 
 export default function SettingsPage() {
   const [params, setParams] = useSearchParams();
@@ -83,34 +72,56 @@ export default function SettingsPage() {
   const [view, setViewState] = useState<View>(requested ?? "decisions");
   const [modal, setModal] = useState<ModalType>(null);
   const [editingDecision, setEditingDecision] = useState<BusinessDecision>();
-  const [editingUser, setEditingUser] = useState<User>();
   const [editingProduct, setEditingProduct] = useState<Product>();
   const [editingSupplier, setEditingSupplier] = useState<Supplier>();
   const [editingAccount, setEditingAccount] = useState<CashBankAccount>();
   const [editingPreset, setEditingPreset] = useState<CostPreset>();
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
+  const actor = useAuthStore((state) => state.session?.user);
   const queryClient = useQueryClient();
   const pushToast = useToastStore((state) => state.push);
 
-  const usersQuery = useQuery({ queryKey: ["settings", "users"], queryFn: settingsService.users });
-  const decisionsQuery = useQuery({ queryKey: ["settings", "decisions"], queryFn: settingsService.decisions });
-  const productsQuery = useQuery({ queryKey: ["products"], queryFn: settingsService.products });
-  const aliasesQuery = useQuery({ queryKey: ["settings", "product-aliases"], queryFn: settingsService.productAliases });
-  const suppliersQuery = useQuery({ queryKey: ["suppliers"], queryFn: settingsService.suppliers });
-  const accountsQuery = useQuery({ queryKey: ["settings", "accounts"], queryFn: settingsService.accounts });
-  const warehouseQuery = useQuery({ queryKey: ["settings", "warehouse"], queryFn: settingsService.warehouse });
-  const presetsQuery = useQuery({ queryKey: ["settings", "cost-presets"], queryFn: settingsService.costPresets });
-  const printQuery = useQuery({ queryKey: ["settings", "print"], queryFn: settingsService.printConfiguration });
-  const categoriesQuery = useQuery({ queryKey: ["accounts", "categories"], queryFn: accountsService.categories });
-  const batchesQuery = useQuery({ queryKey: ["inventory", "batches"], queryFn: inventoryService.batches });
-  const customersQuery = useQuery({ queryKey: ["customers"], queryFn: salesService.customers });
-  const customerOpeningsQuery = useQuery({ queryKey: ["settings", "customer-opening-balances"], queryFn: settingsService.customerOpeningBalances });
-  const queries = [usersQuery, decisionsQuery, productsQuery, aliasesQuery, suppliersQuery, accountsQuery, warehouseQuery, presetsQuery, printQuery, categoriesQuery, batchesQuery, customersQuery, customerOpeningsQuery];
+  const viewAccess = useMemo<Record<View, boolean>>(() => ({
+    decisions: hasEffectivePermission(actor, "settings", "view"),
+    products: hasEffectivePermission(actor, "products", "view"),
+    suppliers: hasEffectivePermission(actor, "suppliers", "view"),
+    business: hasEffectivePermission(actor, "settings", "view"),
+    migration: hasEffectivePermission(actor, "settings", "view"),
+    website: actor?.role === "Super Admin"
+  }), [actor]);
+  const allowedViews = useMemo(() => (Object.keys(viewAccess) as View[]).filter((key) => viewAccess[key]), [viewAccess]);
+  const settingsSubtitle = view === "website"
+    ? "Publish the corporate homepage, public product catalogue, documents, resources and business inquiry queue without exposing ERP stock or cost data."
+    : viewAccess.decisions
+    ? "Master records, company setup, migration tools and client decisions stay here. Employee management belongs in Employees."
+      : "Only the product and supplier master records assigned to this account are available here.";
+
+  useEffect(() => {
+    if (allowedViews.length && !viewAccess[view]) {
+      const next = allowedViews[0];
+      setViewState(next);
+      setParams(next === "decisions" ? {} : { view: next }, { replace: true });
+    }
+  }, [allowedViews, setParams, view, viewAccess]);
+
+  const decisionsQuery = useQuery({ queryKey: ["settings", "decisions"], queryFn: settingsService.decisions, enabled: view === "decisions" && viewAccess.decisions });
+  const productsQuery = useQuery({ queryKey: ["products"], queryFn: settingsService.products, enabled: (view === "products" || view === "migration") && (viewAccess.products || viewAccess.migration) });
+  const aliasesQuery = useQuery({ queryKey: ["settings", "product-aliases"], queryFn: settingsService.productAliases, enabled: view === "products" && viewAccess.products });
+  const suppliersQuery = useQuery({ queryKey: ["suppliers"], queryFn: settingsService.suppliers, enabled: view === "suppliers" && viewAccess.suppliers });
+  const accountsQuery = useQuery({ queryKey: ["settings", "accounts"], queryFn: settingsService.accounts, enabled: view === "business" && viewAccess.business });
+  const warehouseQuery = useQuery({ queryKey: ["settings", "warehouse"], queryFn: settingsService.warehouse, enabled: (view === "business" || view === "migration") && (viewAccess.business || viewAccess.migration) });
+  const presetsQuery = useQuery({ queryKey: ["settings", "cost-presets"], queryFn: settingsService.costPresets, enabled: view === "business" && viewAccess.business });
+  const printQuery = useQuery({ queryKey: ["settings", "print"], queryFn: settingsService.printConfiguration, enabled: view === "business" && viewAccess.business });
+  const categoriesQuery = useQuery({ queryKey: ["accounts", "categories"], queryFn: accountsService.categories, enabled: view === "business" && viewAccess.business });
+  const scoreRulesQuery = useQuery({ queryKey: ["marketing", "score-rules"], queryFn: marketingService.scoreRules, enabled: view === "business" && actor?.role === "Super Admin" });
+  const batchesQuery = useQuery({ queryKey: ["inventory", "batches"], queryFn: inventoryService.batches, enabled: view === "migration" && viewAccess.migration });
+  const customersQuery = useQuery({ queryKey: ["customers"], queryFn: salesService.customers, enabled: view === "migration" && viewAccess.migration });
+  const customerOpeningsQuery = useQuery({ queryKey: ["settings", "customer-opening-balances"], queryFn: settingsService.customerOpeningBalances, enabled: view === "migration" && viewAccess.migration });
+  const queries = view === "decisions" ? [decisionsQuery] : view === "products" ? [productsQuery, aliasesQuery] : view === "suppliers" ? [suppliersQuery] : view === "business" ? [accountsQuery, warehouseQuery, presetsQuery, printQuery, categoriesQuery, ...(actor?.role === "Super Admin" ? [scoreRulesQuery] : [])] : view === "migration" ? [productsQuery, warehouseQuery, batchesQuery, customersQuery, customerOpeningsQuery] : [];
 
   const closeEditor = () => {
     setModal(null);
     setEditingDecision(undefined);
-    setEditingUser(undefined);
     setEditingProduct(undefined);
     setEditingSupplier(undefined);
     setEditingAccount(undefined);
@@ -132,11 +143,11 @@ export default function SettingsPage() {
     setParams(next === "decisions" ? {} : { view: next }, { replace: true });
   };
 
+  if (!viewAccess[view]) return <LoadingBlock label="Opening permitted settings" />;
   if (queries.some((query) => query.isLoading)) return <LoadingBlock label="Loading business settings" />;
   const error = queries.find((query) => query.isError)?.error;
   if (error) return <ErrorBlock error={error} onRetry={() => queries.forEach((query) => void query.refetch())} />;
 
-  const users = usersQuery.data ?? [];
   const decisions = decisionsQuery.data ?? [];
   const products = productsQuery.data ?? [];
   const aliases = aliasesQuery.data ?? [];
@@ -146,6 +157,7 @@ export default function SettingsPage() {
   const warehouse = warehouseQuery.data!;
   const printConfiguration = printQuery.data!;
   const categories = categoriesQuery.data ?? [];
+  const scoreRules = scoreRulesQuery.data ?? [];
   const openingBatches = (batchesQuery.data ?? []).filter((batch) => batch.sourceType === "Opening Stock");
   const customers = customersQuery.data ?? [];
   const customerOpenings = customerOpeningsQuery.data ?? [];
@@ -163,12 +175,11 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="Controlled administration"
         title="Settings"
-        subtitle="Users, master records, company setup, migration tools and client decisions live here without creating more top-level modules."
+        subtitle={settingsSubtitle}
         actions={
-          view === "users" ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setModal("user")}>New User</Button> :
-          view === "products" ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setModal("product")}>New Product</Button> :
-          view === "suppliers" ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setModal("supplier")}>New Supplier</Button> :
-          view === "migration" ? <><Button icon={<Building2 className="h-4 w-4" />} onClick={() => setModal("customer-opening")}>Customer Balance</Button><Button variant="primary" icon={<Database className="h-4 w-4" />} onClick={() => setModal("opening")}>Opening Batch</Button></> : undefined
+          view === "products" && hasEffectivePermission(actor, "products", "create") ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setModal("product")}>New Product</Button> :
+          view === "suppliers" && hasEffectivePermission(actor, "suppliers", "create") ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setModal("supplier")}>New Supplier</Button> :
+          view === "migration" && hasEffectivePermission(actor, "settings", "create") ? <><Button icon={<Building2 className="h-4 w-4" />} onClick={() => setModal("customer-opening")}>Customer Balance</Button><Button variant="primary" icon={<Database className="h-4 w-4" />} onClick={() => setModal("opening")}>Opening Batch</Button></> : undefined
         }
       />
 
@@ -176,27 +187,26 @@ export default function SettingsPage() {
         value={view}
         onChange={setView}
         ariaLabel="Settings groups"
-        options={[
+        options={([
           { value: "decisions", label: "Confirmation Queue", count: decisions.filter((decision) => decision.status !== "Confirmed").length },
-          { value: "users", label: "Users & Capabilities", count: users.length },
           { value: "products", label: "Products & Aliases", count: products.length },
           { value: "suppliers", label: "Suppliers", count: suppliers.length },
           { value: "business", label: "Business Setup" },
-          { value: "migration", label: "Data Migration", count: openingBatches.length + customerOpenings.length }
-        ]}
+          { value: "migration", label: "Data Migration", count: openingBatches.length + customerOpenings.length },
+          { value: "website", label: "Website Content" }
+        ] as Array<{ value: View; label: string; count?: number }>).filter((option) => viewAccess[option.value])}
       />
 
-      {view === "decisions" ? <DecisionQueue decisions={decisions} onEdit={(decision) => { setEditingDecision(decision); setModal("decision"); }} /> : null}
-      {view === "users" ? <UsersTable users={users} onEdit={(user) => { setEditingUser(user); setModal("user"); }} /> : null}
-      {view === "products" ? <ProductsWorkspace products={products} aliases={aliases} onNewAlias={() => setModal("alias")} onEdit={(product) => { setEditingProduct(product); setModal("product"); }} onDelete={setDeleteTarget} /> : null}
-      {view === "suppliers" ? <SuppliersTable suppliers={suppliers} onEdit={(supplier) => { setEditingSupplier(supplier); setModal("supplier"); }} onDelete={setDeleteTarget} /> : null}
-      {view === "business" ? <BusinessSetup accounts={accounts} warehouse={warehouse} categories={categories} presets={presets} printConfiguration={printConfiguration} onModal={setModal} onEditAccount={(account) => { setEditingAccount(account); setModal("account"); }} onEditPreset={(preset) => { setEditingPreset(preset); setModal("preset"); }} onDelete={setDeleteTarget} /> : null}
-      {view === "migration" ? <MigrationWorkspace batches={openingBatches} customerOpenings={customerOpenings} onOpeningStock={() => setModal("opening")} onCustomerBalance={() => setModal("customer-opening")} /> : null}
+      {view === "decisions" ? <DecisionQueue decisions={decisions} canEdit={hasEffectivePermission(actor, "settings", "edit")} onEdit={(decision) => { setEditingDecision(decision); setModal("decision"); }} /> : null}
+      {view === "products" ? <ProductsWorkspace products={products} aliases={aliases} canCreate={hasEffectivePermission(actor, "products", "create")} canEdit={hasEffectivePermission(actor, "products", "edit")} canDelete={hasEffectivePermission(actor, "products", "delete")} onNewAlias={() => setModal("alias")} onEdit={(product) => { setEditingProduct(product); setModal("product"); }} onDelete={setDeleteTarget} /> : null}
+      {view === "suppliers" ? <SuppliersTable suppliers={suppliers} canEdit={hasEffectivePermission(actor, "suppliers", "edit")} canDelete={hasEffectivePermission(actor, "suppliers", "delete")} onEdit={(supplier) => { setEditingSupplier(supplier); setModal("supplier"); }} onDelete={setDeleteTarget} /> : null}
+      {view === "business" ? <BusinessSetup accounts={accounts} warehouse={warehouse} categories={categories} presets={presets} printConfiguration={printConfiguration} scoreRules={scoreRules} canCreate={hasEffectivePermission(actor, "settings", "create")} canEdit={hasEffectivePermission(actor, "settings", "edit")} canDelete={hasEffectivePermission(actor, "settings", "delete")} canEditScoreRules={actor?.role === "Super Admin"} busy={action.isPending} onModal={setModal} onEditAccount={(account) => { setEditingAccount(account); setModal("account"); }} onEditPreset={(preset) => { setEditingPreset(preset); setModal("preset"); }} onSaveScoreRule={(rule, payload) => action.mutate({ run: () => marketingService.updateScoreRule(rule.id, payload), success: `${rule.label} score rule updated` })} onDelete={setDeleteTarget} /> : null}
+      {view === "migration" ? <MigrationWorkspace batches={openingBatches} customerOpenings={customerOpenings} canCreate={hasEffectivePermission(actor, "settings", "create")} onOpeningStock={() => setModal("opening")} onCustomerBalance={() => setModal("customer-opening")} /> : null}
+      {view === "website" ? <WebsiteContentWorkspace /> : null}
 
       {modal === "decision" && editingDecision ? <Modal open title="Record client decision" subtitle="A confirmed item must store the answer, source and notes, not only a status flag." onClose={closeEditor}><DecisionForm decision={editingDecision} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => settingsService.updateDecision(editingDecision.id, payload), success: "Client decision recorded" })} /></Modal> : null}
-      {modal === "user" ? <Modal open title={editingUser ? "Edit user access" : "Create ERP user"} subtitle="A role is assigned here and cannot be switched by the user after login." onClose={closeEditor} width="max-w-3xl"><UserForm user={editingUser} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingUser ? settingsService.updateUser(editingUser.id, payload) : settingsService.createUser(payload), success: editingUser ? "User access updated" : "User created" })} /></Modal> : null}
-      {modal === "product" ? <Modal open title={editingProduct ? "Edit canonical product" : "Create canonical product"} subtitle="Canonical product variants prevent duplicate stock and sales records." onClose={closeEditor}><ProductForm product={editingProduct} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingProduct ? settingsService.updateProduct(editingProduct.id, payload) : settingsService.createProduct(payload), success: editingProduct ? "Product updated" : "Product created" })} /></Modal> : null}
-      {modal === "alias" ? <Modal open title="Map legacy product name" subtitle="Map a spreadsheet spelling or historic item name to one canonical product." onClose={closeEditor}><AliasForm products={products} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => settingsService.createProductAlias(payload), success: "Product alias mapped" })} /></Modal> : null}
+      {modal === "product" ? <Modal open title={editingProduct ? "Edit product" : "Create product"} subtitle="Approved product variants prevent duplicate stock and sales records." onClose={closeEditor}><ProductForm product={editingProduct} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingProduct ? settingsService.updateProduct(editingProduct.id, payload) : settingsService.createProduct(payload), success: editingProduct ? "Product updated" : "Product created" })} /></Modal> : null}
+      {modal === "alias" ? <Modal open title="Map legacy product name" subtitle="Map a spreadsheet spelling or historic item name to one approved product." onClose={closeEditor}><AliasForm products={products} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => settingsService.createProductAlias(payload), success: "Product alias mapped" })} /></Modal> : null}
       {modal === "supplier" ? <Modal open title={editingSupplier ? "Edit supplier" : "Create supplier"} onClose={closeEditor}><SupplierForm supplier={editingSupplier} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingSupplier ? settingsService.updateSupplier(editingSupplier.id, payload) : settingsService.createSupplier(payload), success: editingSupplier ? "Supplier updated" : "Supplier created" })} /></Modal> : null}
       {modal === "account" ? <Modal open title={editingAccount ? "Edit cash / bank account" : "Add cash / bank account"} subtitle="Posted transaction balances cannot be erased by deleting an account." onClose={closeEditor}><AccountForm account={editingAccount} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingAccount ? settingsService.updateAccount(editingAccount.id, payload) : settingsService.createAccount(payload), success: editingAccount ? "Account updated" : "Account created" })} /></Modal> : null}
       {modal === "warehouse" ? <Modal open title="Edit main warehouse" subtitle="Additional warehouses remain disabled until the client confirms scope." onClose={closeEditor}><WarehouseForm warehouse={warehouse} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => settingsService.updateWarehouse(payload), success: "Warehouse configuration updated" })} /></Modal> : null}
@@ -218,7 +228,7 @@ export default function SettingsPage() {
   );
 }
 
-function DecisionQueue({ decisions, onEdit }: { decisions: BusinessDecision[]; onEdit: (decision: BusinessDecision) => void }) {
+function DecisionQueue({ decisions, canEdit, onEdit }: { decisions: BusinessDecision[]; canEdit: boolean; onEdit: (decision: BusinessDecision) => void }) {
   return (
     <Panel title="Client confirmation queue" subtitle="Confirmed answers remain visible with their source. Pending decisions keep related automation disabled.">
       <div className="divide-y divide-slate-100">
@@ -233,7 +243,7 @@ function DecisionQueue({ decisions, onEdit }: { decisions: BusinessDecision[]; o
             </div>
             <div className="flex flex-col items-start justify-between gap-3 lg:items-end">
               <div className="flex flex-wrap gap-1">{decision.blocks.map((block) => <span className="rounded bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800" key={block}>{block}</span>)}</div>
-              <Button icon={decision.status === "Confirmed" ? <Pencil className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} onClick={() => onEdit(decision)}>{decision.status === "Confirmed" ? "Review Decision" : "Record Answer"}</Button>
+              {canEdit ? <Button icon={decision.status === "Confirmed" ? <Pencil className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} onClick={() => onEdit(decision)}>{decision.status === "Confirmed" ? "Review Decision" : "Record Answer"}</Button> : null}
             </div>
           </article>
         ))}
@@ -242,62 +252,65 @@ function DecisionQueue({ decisions, onEdit }: { decisions: BusinessDecision[]; o
   );
 }
 
-function UsersTable({ users, onEdit }: { users: User[]; onEdit: (user: User) => void }) {
-  return (
-    <Panel title="Role-based users" subtitle="Role defaults control visible areas; explicit capabilities grant only named sensitive actions.">
-      <TableFrame><table className="w-full min-w-[1100px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">User</th><th className="px-4 py-3">Assigned Role</th><th className="px-4 py-3">Department</th><th className="px-4 py-3">Explicit Capabilities</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Edit</th></tr></thead><tbody className="divide-y divide-slate-100">{users.map((user) => <tr key={user.id}><td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar className="h-10 w-10 rounded object-cover" src={user.avatarUrl} name={user.name} /><div><strong className="block">{user.name}</strong><small className="text-slate-500">{user.email} | {user.phone}</small></div></div></td><td className="px-4 py-3"><span className="rounded bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{user.role}</span></td><td className="px-4 py-3 text-slate-600">{user.department}<small className="block">{user.title}</small></td><td className="max-w-md px-4 py-3"><div className="flex flex-wrap gap-1">{user.capabilities?.length ? user.capabilities.map((capability) => <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600" key={capability}>{capability.replaceAll("_", " ")}</span>) : <span className="text-xs text-slate-400">Role defaults only</span>}</div></td><td className="px-4 py-3"><StatusBadge status={user.status} /></td><td className="px-4 py-3 text-right"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEdit(user)} aria-label={`Edit ${user.name}`} title="Edit user" /></td></tr>)}</tbody></table></TableFrame>
-    </Panel>
-  );
-}
-
-function ProductsWorkspace({ products, aliases, onNewAlias, onEdit, onDelete }: { products: Product[]; aliases: ProductAlias[]; onNewAlias: () => void; onEdit: (product: Product) => void; onDelete: (target: DeleteTarget) => void }) {
+function ProductsWorkspace({ products, aliases, canCreate, canEdit, canDelete, onNewAlias, onEdit, onDelete }: { products: Product[]; aliases: ProductAlias[]; canCreate: boolean; canEdit: boolean; canDelete: boolean; onNewAlias: () => void; onEdit: (product: Product) => void; onDelete: (target: DeleteTarget) => void }) {
   return (
     <div className="grid gap-4">
-      <Panel title="Canonical product master" subtitle="Images, family and variant make each medical item unambiguous across imports, stock and sales.">
-        <TableFrame><table className="w-full min-w-[980px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Product</th><th className="px-4 py-3">Family / Variant</th><th className="px-4 py-3">HS Code</th><th className="px-4 py-3 text-right">Standard Price</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{products.map((product) => <tr key={product.id}><td className="px-4 py-3"><div className="flex items-center gap-3"><ProductThumb src={product.imageUrl} name={product.name} /><div><strong className="block">{product.name}</strong><small className="text-cyan-700">{product.code}</small></div></div></td><td className="px-4 py-3 text-slate-600">{product.family}<small className="block">{product.variant}</small></td><td className="px-4 py-3 text-slate-600">{product.hsCode || "-"}</td><td className="px-4 py-3 text-right font-semibold">{formatCurrency(product.standardSalePrice)}</td><td className="px-4 py-3"><StatusBadge status={product.active ? "Active" : "Inactive"} /></td><td className="px-4 py-3 text-right"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEdit(product)} aria-label={`Edit ${product.name}`} /><Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "product", id: product.id, label: product.name })} aria-label={`Delete ${product.name}`} /></td></tr>)}</tbody></table></TableFrame>
+      <Panel title="Product master" subtitle="Images, family and variant identify each medical item consistently across imports, stock and sales.">
+        <TableFrame><table className="w-full min-w-[980px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Product</th><th className="px-4 py-3">Family / Variant</th><th className="px-4 py-3">HS Code</th><th className="px-4 py-3 text-right">Standard Price</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{products.map((product) => <tr key={product.id}><td className="px-4 py-3"><div className="flex items-center gap-3"><ProductThumb src={product.imageUrl} name={product.name} /><div><strong className="block">{product.name}</strong><small className="text-cyan-700">{product.code}</small></div></div></td><td className="px-4 py-3 text-slate-600">{product.family}<small className="block">{product.variant}</small></td><td className="px-4 py-3 text-slate-600">{product.hsCode || "-"}</td><td className="px-4 py-3 text-right font-semibold">{formatCurrency(product.standardSalePrice)}</td><td className="px-4 py-3"><StatusBadge status={product.active ? "Active" : "Inactive"} /></td><td className="px-4 py-3 text-right">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEdit(product)} aria-label={`Edit ${product.name}`} /> : null}{canDelete ? <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "product", id: product.id, label: product.name })} aria-label={`Delete ${product.name}`} /> : null}</td></tr>)}</tbody></table></TableFrame>
       </Panel>
-      <Panel title="Legacy name mapping" subtitle="Spreadsheet spellings map to a canonical variant so migration cannot create duplicate products." actions={<Button icon={<Link2 className="h-4 w-4" />} onClick={onNewAlias}>Map Alias</Button>}>
-        <TableFrame><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Legacy / Alias Name</th><th className="px-4 py-3">Canonical Product</th><th className="px-4 py-3">Source</th><th className="px-4 py-3 text-right">Remove</th></tr></thead><tbody className="divide-y divide-slate-100">{aliases.map((alias) => <tr key={alias.id}><td className="px-4 py-3 font-semibold">{alias.aliasText}</td><td className="px-4 py-3 text-slate-600">{alias.productName}</td><td className="px-4 py-3 text-slate-500">{alias.source}</td><td className="px-4 py-3 text-right"><Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "alias", id: alias.id, label: alias.aliasText })} aria-label={`Remove alias ${alias.aliasText}`} /></td></tr>)}{!aliases.length ? <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-500">No legacy product aliases have been mapped.</td></tr> : null}</tbody></table></TableFrame>
+      <Panel title="Legacy name mapping" subtitle="Spreadsheet spellings map to an approved variant so migration cannot create duplicate products." actions={canCreate ? <Button icon={<Link2 className="h-4 w-4" />} onClick={onNewAlias}>Map Alias</Button> : undefined}>
+        <TableFrame><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Legacy / Alias Name</th><th className="px-4 py-3">Product</th><th className="px-4 py-3">Source</th><th className="px-4 py-3 text-right">Remove</th></tr></thead><tbody className="divide-y divide-slate-100">{aliases.map((alias) => <tr key={alias.id}><td className="px-4 py-3 font-semibold">{alias.aliasText}</td><td className="px-4 py-3 text-slate-600">{alias.productName}</td><td className="px-4 py-3 text-slate-500">{alias.source}</td><td className="px-4 py-3 text-right">{canDelete ? <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "alias", id: alias.id, label: alias.aliasText })} aria-label={`Remove alias ${alias.aliasText}`} /> : null}</td></tr>)}{!aliases.length ? <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-500">No legacy product aliases have been mapped.</td></tr> : null}</tbody></table></TableFrame>
       </Panel>
     </div>
   );
 }
 
-function SuppliersTable({ suppliers, onEdit, onDelete }: { suppliers: Supplier[]; onEdit: (supplier: Supplier) => void; onDelete: (target: DeleteTarget) => void }) {
+function SuppliersTable({ suppliers, canEdit, canDelete, onEdit, onDelete }: { suppliers: Supplier[]; canEdit: boolean; canDelete: boolean; onEdit: (supplier: Supplier) => void; onDelete: (target: DeleteTarget) => void }) {
   return (
     <Panel title="Supplier master" subtitle="Commercial contacts are reused by import drafts and shipment records.">
-      <TableFrame><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Supplier</th><th className="px-4 py-3">Country</th><th className="px-4 py-3">Contact</th><th className="px-4 py-3">Payment Terms</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{suppliers.map((supplier) => <tr key={supplier.id}><td className="px-4 py-3 font-semibold">{supplier.name}</td><td className="px-4 py-3 text-slate-600">{supplier.country}</td><td className="px-4 py-3 text-slate-600">{supplier.contactPerson}<small className="block">{supplier.email} | {supplier.phone}</small></td><td className="px-4 py-3 text-slate-600">{supplier.paymentTerms}</td><td className="px-4 py-3"><StatusBadge status={supplier.active ? "Active" : "Inactive"} /></td><td className="px-4 py-3 text-right"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEdit(supplier)} aria-label={`Edit ${supplier.name}`} /><Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "supplier", id: supplier.id, label: supplier.name })} aria-label={`Delete ${supplier.name}`} /></td></tr>)}</tbody></table></TableFrame>
+      <TableFrame><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Supplier</th><th className="px-4 py-3">Country</th><th className="px-4 py-3">Contact</th><th className="px-4 py-3">Payment Terms</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{suppliers.map((supplier) => <tr key={supplier.id}><td className="px-4 py-3 font-semibold">{supplier.name}</td><td className="px-4 py-3 text-slate-600">{supplier.country}</td><td className="px-4 py-3 text-slate-600">{supplier.contactPerson}<small className="block">{supplier.email} | {supplier.phone}</small></td><td className="px-4 py-3 text-slate-600">{supplier.paymentTerms}</td><td className="px-4 py-3"><StatusBadge status={supplier.active ? "Active" : "Inactive"} /></td><td className="px-4 py-3 text-right">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEdit(supplier)} aria-label={`Edit ${supplier.name}`} /> : null}{canDelete ? <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "supplier", id: supplier.id, label: supplier.name })} aria-label={`Delete ${supplier.name}`} /> : null}</td></tr>)}</tbody></table></TableFrame>
     </Panel>
   );
 }
 
-function BusinessSetup({ accounts, warehouse, categories, presets, printConfiguration, onModal, onEditAccount, onEditPreset, onDelete }: { accounts: CashBankAccount[]; warehouse: WarehouseConfig; categories: { id: string; name: string; active: boolean }[]; presets: CostPreset[]; printConfiguration: PrintConfiguration; onModal: (modal: ModalType) => void; onEditAccount: (account: CashBankAccount) => void; onEditPreset: (preset: CostPreset) => void; onDelete: (target: DeleteTarget) => void }) {
+function BusinessSetup({ accounts, warehouse, categories, presets, printConfiguration, scoreRules, canCreate, canEdit, canDelete, canEditScoreRules, busy, onModal, onEditAccount, onEditPreset, onSaveScoreRule, onDelete }: { accounts: CashBankAccount[]; warehouse: WarehouseConfig; categories: { id: string; name: string; active: boolean }[]; presets: CostPreset[]; printConfiguration: PrintConfiguration; scoreRules: MarketingScoreRule[]; canCreate: boolean; canEdit: boolean; canDelete: boolean; canEditScoreRules: boolean; busy: boolean; onModal: (modal: ModalType) => void; onEditAccount: (account: CashBankAccount) => void; onEditPreset: (preset: CostPreset) => void; onSaveScoreRule: (rule: MarketingScoreRule, payload: Partial<MarketingScoreRule>) => void; onDelete: (target: DeleteTarget) => void }) {
   return (
     <div className="grid gap-4">
-      <Panel title="Cash, bank and mobile accounts" subtitle="Collections and expenses must post to an active real account." actions={<Button icon={<Plus className="h-4 w-4" />} onClick={() => onModal("account")}>Add Account</Button>}>
-        <div className="divide-y divide-slate-100">{accounts.map((account) => <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center" key={account.id}><span className="grid h-10 w-10 place-items-center rounded bg-cyan-50 text-cyan-700"><Banknote className="h-5 w-5" /></span><div className="min-w-0 flex-1"><strong className="block">{account.name}</strong><span className="text-xs text-slate-500">{account.type} | {account.accountNumber || "No account number"}</span></div><strong>{formatCurrency(account.balance)}</strong><StatusBadge status={account.active ? "Active" : "Inactive"} /><div><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEditAccount(account)} aria-label={`Edit ${account.name}`} /><Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "account", id: account.id, label: account.name })} aria-label={`Delete ${account.name}`} /></div></div>)}</div>
+      <Panel title="Cash, bank and mobile accounts" subtitle="Collections and expenses must post to an active real account." actions={canCreate ? <Button icon={<Plus className="h-4 w-4" />} onClick={() => onModal("account")}>Add Account</Button> : undefined}>
+        <div className="divide-y divide-slate-100">{accounts.map((account) => <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center" key={account.id}><span className="grid h-10 w-10 place-items-center rounded bg-cyan-50 text-cyan-700"><Banknote className="h-5 w-5" /></span><div className="min-w-0 flex-1"><strong className="block">{account.name}</strong><span className="text-xs text-slate-500">{account.type} | {account.accountNumber || "No account number"}</span></div><strong>{formatCurrency(account.balance)}</strong><StatusBadge status={account.active ? "Active" : "Inactive"} /><div>{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEditAccount(account)} aria-label={`Edit ${account.name}`} /> : null}{canDelete ? <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "account", id: account.id, label: account.name })} aria-label={`Delete ${account.name}`} /> : null}</div></div>)}</div>
       </Panel>
       <div className="grid gap-4 xl:grid-cols-2">
-        <Panel title="Main warehouse" subtitle="One warehouse is active until the client confirms multi-warehouse operation." actions={<Button icon={<Pencil className="h-4 w-4" />} onClick={() => onModal("warehouse")}>Edit</Button>}><div className="flex gap-3 p-4"><Warehouse className="h-6 w-6 text-cyan-700" /><div><strong>{warehouse.name}</strong><p className="mt-1 text-sm text-slate-600">{warehouse.address}</p><p className="mt-2 text-xs text-slate-500">{warehouse.contactPerson} | {warehouse.phone}</p><div className="mt-3 flex flex-wrap gap-1">{warehouse.locations.map((location) => <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-semibold" key={location}>{location}</span>)}</div></div></div></Panel>
-        <Panel title="Expense categories" subtitle="Daily expenditure reports preserve the posted category name." actions={<Button icon={<Plus className="h-4 w-4" />} onClick={() => onModal("category")}>Add</Button>}><div className="flex flex-wrap gap-2 p-4">{categories.map((category) => <span className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold" key={category.id}><Tags className="h-4 w-4 text-cyan-700" />{category.name}<StatusBadge status={category.active ? "Active" : "Inactive"} /></span>)}</div></Panel>
+        <Panel title="Main warehouse" subtitle="One warehouse is active until the client confirms multi-warehouse operation." actions={canEdit ? <Button icon={<Pencil className="h-4 w-4" />} onClick={() => onModal("warehouse")}>Edit</Button> : undefined}><div className="flex gap-3 p-4"><Warehouse className="h-6 w-6 text-cyan-700" /><div><strong>{warehouse.name}</strong><p className="mt-1 text-sm text-slate-600">{warehouse.address}</p><p className="mt-2 text-xs text-slate-500">{warehouse.contactPerson} | {warehouse.phone}</p><div className="mt-3 flex flex-wrap gap-1">{warehouse.locations.map((location) => <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-semibold" key={location}>{location}</span>)}</div></div></div></Panel>
+        <Panel title="Expense categories" subtitle="Daily expenditure reports preserve the posted category name." actions={canCreate ? <Button icon={<Plus className="h-4 w-4" />} onClick={() => onModal("category")}>Add</Button> : undefined}><div className="flex flex-wrap gap-2 p-4">{categories.map((category) => <span className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold" key={category.id}><Tags className="h-4 w-4 text-cyan-700" />{category.name}<StatusBadge status={category.active ? "Active" : "Inactive"} /></span>)}</div></Panel>
       </div>
-      <Panel title="Import cost presets" subtitle="Local Transport defaults to confirmed CBM. Common-cost methods remain explicit until the client confirms a default." actions={<Button icon={<Plus className="h-4 w-4" />} onClick={() => onModal("preset")}>Add Preset</Button>}>
-        <TableFrame><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Preset</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Suggested Basis</th><th className="px-4 py-3">Explicit Choice</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{presets.map((preset) => <tr key={preset.id}><td className="px-4 py-3 font-semibold">{preset.name}</td><td className="px-4 py-3 text-slate-600">{preset.category}</td><td className="px-4 py-3">{preset.suggestedAllocationMethod?.replaceAll("_", " ") ?? "No suggestion"}</td><td className="px-4 py-3"><StatusBadge status={preset.requiresExplicitChoice ? "Pending" : "Confirmed"} /></td><td className="px-4 py-3 text-right"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEditPreset(preset)} aria-label={`Edit ${preset.name}`} /><Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "preset", id: preset.id, label: preset.name })} aria-label={`Delete ${preset.name}`} /></td></tr>)}</tbody></table></TableFrame>
+      <Panel title="Import cost presets" subtitle="Local Transport defaults to confirmed CBM. Common-cost methods remain explicit until the client confirms a default." actions={canCreate ? <Button icon={<Plus className="h-4 w-4" />} onClick={() => onModal("preset")}>Add Preset</Button> : undefined}>
+        <TableFrame><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Preset</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Suggested Basis</th><th className="px-4 py-3">Explicit Choice</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{presets.map((preset) => <tr key={preset.id}><td className="px-4 py-3 font-semibold">{preset.name}</td><td className="px-4 py-3 text-slate-600">{preset.category}</td><td className="px-4 py-3">{preset.suggestedAllocationMethod?.replaceAll("_", " ") ?? "No suggestion"}</td><td className="px-4 py-3"><StatusBadge status={preset.requiresExplicitChoice ? "Pending" : "Confirmed"} /></td><td className="px-4 py-3 text-right">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => onEditPreset(preset)} aria-label={`Edit ${preset.name}`} /> : null}{canDelete ? <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => onDelete({ type: "preset", id: preset.id, label: preset.name })} aria-label={`Delete ${preset.name}`} /> : null}</td></tr>)}</tbody></table></TableFrame>
       </Panel>
-      <Panel title="Supplied stationery and A4 calibration" subtitle="Quotation and order outputs use the real MIPRO / LED backgrounds with millimetre safe areas." actions={<Button icon={<Ruler className="h-4 w-4" />} onClick={() => onModal("print")}>Calibrate</Button>}>
+      {scoreRules.length ? <Panel title="Marketing activity score rules" subtitle="Points come from saved business activity. Manual notes cannot award transaction points.">
+        <div className="divide-y divide-slate-100">{scoreRules.map((rule) => <ScoreRuleEditor rule={rule} canEdit={canEditScoreRules} busy={busy} onSave={(payload) => onSaveScoreRule(rule, payload)} key={rule.id} />)}</div>
+      </Panel> : null}
+      <Panel title="Supplied stationery and A4 calibration" subtitle="Quotation and order outputs use the real MIPRO / LED backgrounds with millimetre safe areas." actions={canEdit ? <Button icon={<Ruler className="h-4 w-4" />} onClick={() => onModal("print")}>Calibrate</Button> : undefined}>
         <div className="grid gap-4 p-4 md:grid-cols-2">{printConfiguration.identities.map((identity) => <div className="flex min-w-0 gap-3 border-b border-slate-100 pb-4 md:border-b-0" key={identity.id}><div className="h-28 w-20 shrink-0 overflow-hidden border border-slate-200 bg-slate-50">{identity.backgroundImageUrl ? <img className="h-full w-full object-cover object-top" src={identity.backgroundImageUrl} alt={`${identity.displayName} letterhead`} /> : <ImageIcon className="m-auto h-7 w-7 text-slate-300" />}</div><div className="min-w-0"><strong className="block">{identity.displayName}</strong><span className="block truncate text-xs text-slate-500">{identity.address}</span><span className="mt-2 block text-xs text-slate-600">Safe area: {identity.safeArea.topMm} / {identity.safeArea.rightMm} / {identity.safeArea.bottomMm} / {identity.safeArea.leftMm} mm</span>{printConfiguration.defaultIdentityId === identity.id ? <span className="mt-2 inline-block rounded bg-cyan-50 px-2 py-1 text-[10px] font-bold text-cyan-800">Default identity</span> : null}</div></div>)}</div>
       </Panel>
     </div>
   );
 }
 
-function MigrationWorkspace({ batches, customerOpenings, onOpeningStock, onCustomerBalance }: { batches: StockBatch[]; customerOpenings: CustomerOpeningBalance[]; onOpeningStock: () => void; onCustomerBalance: () => void }) {
+function ScoreRuleEditor({ rule, canEdit, busy, onSave }: { rule: MarketingScoreRule; canEdit: boolean; busy: boolean; onSave: (payload: Partial<MarketingScoreRule>) => void }) {
+  const [points, setPoints] = useState(rule.points);
+  const [active, setActive] = useState(rule.active);
+  useEffect(() => { setPoints(rule.points); setActive(rule.active); }, [rule]);
+  const changed = points !== rule.points || active !== rule.active;
+  return <div className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_110px_120px_auto] sm:items-end"><div className="flex min-w-0 items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded bg-cyan-50 text-cyan-800"><Gauge className="h-4 w-4" /></span><div className="min-w-0"><strong className="block text-sm">{rule.label}</strong><span className="block text-xs text-slate-500">{rule.event.replaceAll("_", " ")} | saved business event</span></div></div><label><span className={labelClass}>Points</span><input className={inputClass} type="number" min="0" max="100" step="1" disabled={!canEdit} value={points} onChange={(event) => setPoints(Number(event.target.value))} /></label><label className="flex min-h-10 items-center gap-2 text-sm font-semibold"><input type="checkbox" disabled={!canEdit} checked={active} onChange={(event) => setActive(event.target.checked)} /> Active</label><Button icon={<Save className="h-4 w-4" />} disabled={!canEdit || busy || !changed || !Number.isInteger(points) || points < 0 || points > 100} onClick={() => onSave({ points, active })}>Save</Button></div>;
+}
+
+function MigrationWorkspace({ batches, customerOpenings, canCreate, onOpeningStock, onCustomerBalance }: { batches: StockBatch[]; customerOpenings: CustomerOpeningBalance[]; canCreate: boolean; onOpeningStock: () => void; onCustomerBalance: () => void }) {
   return (
     <div className="grid gap-4">
-      <Panel title="Opening stock / legacy batches" subtitle="Historical batches participate in FIFO before newer matching import receipts. Expired batches remain visible but are never dispatched." actions={<Button icon={<Database className="h-4 w-4" />} onClick={onOpeningStock}>Post Batch</Button>}>
+      <Panel title="Opening stock / legacy batches" subtitle="Historical batches participate in FIFO before newer matching import receipts. Expired batches remain visible but are never dispatched." actions={canCreate ? <Button icon={<Database className="h-4 w-4" />} onClick={onOpeningStock}>Post Batch</Button> : undefined}>
         <TableFrame><table className="w-full min-w-[1040px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Product</th><th className="px-4 py-3">Lot / Batch</th><th className="px-4 py-3">Historic Receipt</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Expiry</th><th className="px-4 py-3">Location</th><th className="px-4 py-3 text-right">Available</th><th className="px-4 py-3 text-right">Landed / Unit</th></tr></thead><tbody className="divide-y divide-slate-100">{batches.map((batch) => <tr key={batch.id}><td className="px-4 py-3"><strong className="block">{batch.productName}</strong><small className="text-cyan-700">{batch.productCode}</small></td><td className="px-4 py-3">{batch.lotNumber}<small className="block text-slate-500">{batch.batchNumber}</small></td><td className="px-4 py-3 text-slate-600">{batch.receivedDate}</td><td className="px-4 py-3 text-slate-600">{batch.sourceReference}</td><td className="px-4 py-3">{batch.expiryDate}<small className="mt-1 block"><StatusBadge status={batch.expiryStatus} /></small></td><td className="px-4 py-3 text-slate-600">{batch.warehouse}<small className="block">{batch.location}</small></td><td className="px-4 py-3 text-right font-bold">{formatNumber(batch.quantityAvailable)}</td><td className="px-4 py-3 text-right font-semibold">{batch.landedCostPerUnit ? formatCurrency(batch.landedCostPerUnit) : "Not entered"}</td></tr>)}{!batches.length ? <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">No legacy batches have been posted yet.</td></tr> : null}</tbody></table></TableFrame>
       </Panel>
-      <Panel title="Customer opening balances" subtitle="Legacy dues become the first entry in the customer's running ledger; later deliveries and collections continue from it." actions={<Button icon={<Building2 className="h-4 w-4" />} onClick={onCustomerBalance}>Post Balance</Button>}>
+      <Panel title="Customer opening balances" subtitle="Legacy dues become the first entry in the customer's running ledger; later deliveries and collections continue from it." actions={canCreate ? <Button icon={<Building2 className="h-4 w-4" />} onClick={onCustomerBalance}>Post Balance</Button> : undefined}>
         <TableFrame><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-3">Cutover Date</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Reference</th><th className="px-4 py-3 text-right">Historical Sales</th><th className="px-4 py-3 text-right">Collected</th><th className="px-4 py-3 text-right">Opening Due</th><th className="px-4 py-3">Posted By</th></tr></thead><tbody className="divide-y divide-slate-100">{customerOpenings.map((opening) => <tr key={opening.id}><td className="px-4 py-3 text-slate-600">{opening.date}</td><td className="px-4 py-3 font-semibold">{opening.customerName}</td><td className="px-4 py-3 text-slate-600">{opening.reference}<small className="block max-w-64 truncate">{opening.remarks}</small></td><td className="px-4 py-3 text-right">{formatCurrency(opening.historicalSales)}</td><td className="px-4 py-3 text-right text-emerald-700">{formatCurrency(opening.historicalCollected)}</td><td className="px-4 py-3 text-right font-bold text-rose-700">{formatCurrency(opening.openingDue)}</td><td className="px-4 py-3 text-slate-500">{opening.createdBy}</td></tr>)}{!customerOpenings.length ? <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">No customer opening balances have been posted in this session.</td></tr> : null}</tbody></table></TableFrame>
       </Panel>
     </div>
@@ -309,19 +322,14 @@ function DecisionForm({ decision, busy, onSubmit }: { decision: BusinessDecision
   return <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); onSubmit(form); }}><label><span className={labelClass}>Decision Status</span><select className={inputClass} value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as BusinessDecision["status"] }))}><option>Pending Client Confirmation</option><option>Confirmed</option></select></label><label><span className={labelClass}>Resolution / Confirmed Answer</span><input className={inputClass} required={form.status === "Confirmed"} value={form.resolutionValue} onChange={(event) => setForm((current) => ({ ...current, resolutionValue: event.target.value }))} placeholder="e.g. CBM, Optional invoice, One warehouse" /></label><label><span className={labelClass}>Resolution Notes</span><textarea className={textareaClass} value={form.resolutionNotes} onChange={(event) => setForm((current) => ({ ...current, resolutionNotes: event.target.value }))} /></label><label><span className={labelClass}>Source Reference</span><input className={inputClass} value={form.sourceReference} onChange={(event) => setForm((current) => ({ ...current, sourceReference: event.target.value }))} placeholder="Meeting date, email or requirement file" /></label><div className="flex justify-end"><Button type="submit" variant="primary" icon={<CheckCircle2 className="h-4 w-4" />} disabled={busy || (form.status === "Confirmed" && !form.resolutionValue.trim())}>Save Decision</Button></div></form>;
 }
 
-function UserForm({ user, busy, onSubmit }: { user?: User; busy: boolean; onSubmit: (payload: Partial<User> & { password?: string }) => void }) {
-  const [form, setForm] = useState({ name: user?.name ?? "", email: user?.email ?? "", role: user?.role ?? "Sales Executive" as Role, title: user?.title ?? "", department: user?.department ?? "", phone: user?.phone ?? "", avatarUrl: user?.avatarUrl ?? "", territory: user?.territory ?? "", status: user?.status ?? "Active", password: "", capabilities: user?.capabilities ?? [] as Capability[] });
-  return <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); onSubmit(form as Partial<User> & { password?: string }); }}><div className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 sm:col-span-2"><Avatar className="h-16 w-16 rounded object-cover" src={form.avatarUrl} name={form.name || "User"} /><div><strong className="block">{form.name || "New user"}</strong><span className="text-xs text-slate-500">{form.role}</span></div></div><label><span className={labelClass}>Full Name</span><input className={inputClass} required value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} /></label><label><span className={labelClass}>Email</span><input className={inputClass} type="email" required value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} /></label><label><span className={labelClass}>Assigned Role</span><select className={inputClass} value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value as Role }))}>{roles.map((role) => <option key={role}>{role}</option>)}</select></label><label><span className={labelClass}>Status</span><select className={inputClass} value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as User["status"] }))}><option>Active</option><option>Pending</option><option>Inactive</option></select></label><label><span className={labelClass}>Job Title</span><input className={inputClass} required value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} /></label><label><span className={labelClass}>Department</span><input className={inputClass} required value={form.department} onChange={(event) => setForm((current) => ({ ...current, department: event.target.value }))} /></label><label><span className={labelClass}>Phone</span><input className={inputClass} value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} /></label><label><span className={labelClass}>Territory</span><input className={inputClass} value={form.territory} onChange={(event) => setForm((current) => ({ ...current, territory: event.target.value }))} /></label><label className="sm:col-span-2"><span className={labelClass}>Profile Image URL</span><input className={inputClass} value={form.avatarUrl} onChange={(event) => setForm((current) => ({ ...current, avatarUrl: event.target.value }))} /></label><label className="sm:col-span-2"><span className={labelClass}>{user ? "New Password (optional)" : "Initial Password"}</span><input className={inputClass} type="password" minLength={6} required={!user} value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} /></label><fieldset className="rounded-md border border-slate-200 p-3 sm:col-span-2"><legend className="px-1 text-xs font-bold uppercase text-slate-500">Explicit Capabilities</legend><div className="grid gap-2 sm:grid-cols-2">{capabilityOptions.map(([value, label]) => <label className="flex items-center gap-2 rounded bg-slate-50 p-2 text-sm" key={value}><input type="checkbox" checked={form.capabilities.includes(value)} onChange={(event) => setForm((current) => ({ ...current, capabilities: event.target.checked ? [...current.capabilities, value] : current.capabilities.filter((capability) => capability !== value) }))} /> {label}</label>)}</div></fieldset><div className="flex justify-end sm:col-span-2"><Button type="submit" variant="primary" icon={<ShieldCheck className="h-4 w-4" />} disabled={busy}>Save User Access</Button></div></form>;
-}
-
 function ProductForm({ product, busy, onSubmit }: { product?: Product; busy: boolean; onSubmit: (payload: Partial<Product>) => void }) {
   const [form, setForm] = useState({ code: product?.code ?? "", family: product?.family ?? "", variant: product?.variant ?? "", name: product?.name ?? "", unit: product?.unit ?? "pcs", hsCode: product?.hsCode ?? "", imageUrl: product?.imageUrl ?? "", standardSalePrice: product?.standardSalePrice ?? "", active: product?.active ?? true });
-  return <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); onSubmit(form); }}><div className="flex items-center gap-3 rounded-md bg-slate-50 p-3 sm:col-span-2"><ProductThumb src={form.imageUrl} name={form.name || "Product"} size="lg" /><span className="text-sm text-slate-500">This image appears in product selection, stock and sales.</span></div>{[["code", "Product Code"], ["family", "Family"], ["variant", "Variant"], ["name", "Canonical Name"], ["unit", "Unit"], ["hsCode", "HS Code"], ["standardSalePrice", "Standard Sale Price"], ["imageUrl", "Product Image URL"]].map(([key, label]) => <label className={key === "imageUrl" ? "sm:col-span-2" : ""} key={key}><span className={labelClass}>{label}</span><input className={inputClass} type={key === "standardSalePrice" ? "number" : "text"} required={key !== "hsCode"} value={String(form[key as keyof typeof form])} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /></label>)}<label className="flex items-center gap-2 text-sm font-semibold sm:col-span-2"><input type="checkbox" checked={form.active} onChange={(event) => setForm((current) => ({ ...current, active: event.target.checked }))} /> Active product</label><div className="flex justify-end sm:col-span-2"><Button type="submit" variant="primary" icon={<PackagePlus className="h-4 w-4" />} disabled={busy}>Save Product</Button></div></form>;
+  return <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); onSubmit(form); }}><div className="flex items-center gap-3 rounded-md bg-slate-50 p-3 sm:col-span-2"><ProductThumb src={form.imageUrl} name={form.name || "Product"} size="lg" /><span className="text-sm text-slate-500">This image appears in product selection, stock and sales.</span></div>{[["code", "Product Code"], ["family", "Family"], ["variant", "Variant"], ["name", "Product Name"], ["unit", "Unit"], ["hsCode", "HS Code"], ["standardSalePrice", "Standard Sale Price"], ["imageUrl", "Product Image URL"]].map(([key, label]) => <label className={key === "imageUrl" ? "sm:col-span-2" : ""} key={key}><span className={labelClass}>{label}</span><input className={inputClass} type={key === "standardSalePrice" ? "number" : "text"} required={key !== "hsCode"} value={String(form[key as keyof typeof form])} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /></label>)}<label className="flex items-center gap-2 text-sm font-semibold sm:col-span-2"><input type="checkbox" checked={form.active} onChange={(event) => setForm((current) => ({ ...current, active: event.target.checked }))} /> Active product</label><div className="flex justify-end sm:col-span-2"><Button type="submit" variant="primary" icon={<PackagePlus className="h-4 w-4" />} disabled={busy}>Save Product</Button></div></form>;
 }
 
 function AliasForm({ products, busy, onSubmit }: { products: Product[]; busy: boolean; onSubmit: (payload: Partial<ProductAlias>) => void }) {
   const [form, setForm] = useState({ aliasText: "", productId: "", source: "Sales Ledger Item Mapping" });
-  return <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); onSubmit(form); }}><label><span className={labelClass}>Legacy / Alias Name</span><input className={inputClass} required minLength={2} value={form.aliasText} onChange={(event) => setForm((current) => ({ ...current, aliasText: event.target.value }))} /></label><label><span className={labelClass}>Canonical Product</span><select className={inputClass} required value={form.productId} onChange={(event) => setForm((current) => ({ ...current, productId: event.target.value }))}><option value="">Select product</option>{products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.code} - {product.name}</option>)}</select></label><label><span className={labelClass}>Source</span><input className={inputClass} required value={form.source} onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))} /></label><div className="flex justify-end"><Button type="submit" variant="primary" icon={<Link2 className="h-4 w-4" />} disabled={busy}>Map Alias</Button></div></form>;
+  return <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); onSubmit(form); }}><label><span className={labelClass}>Legacy / Alias Name</span><input className={inputClass} required minLength={2} value={form.aliasText} onChange={(event) => setForm((current) => ({ ...current, aliasText: event.target.value }))} /></label><label><span className={labelClass}>Product</span><select className={inputClass} required value={form.productId} onChange={(event) => setForm((current) => ({ ...current, productId: event.target.value }))}><option value="">Select product</option>{products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.code} - {product.name}</option>)}</select></label><label><span className={labelClass}>Source</span><input className={inputClass} required value={form.source} onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))} /></label><div className="flex justify-end"><Button type="submit" variant="primary" icon={<Link2 className="h-4 w-4" />} disabled={busy}>Map Alias</Button></div></form>;
 }
 
 function SupplierForm({ supplier, busy, onSubmit }: { supplier?: Supplier; busy: boolean; onSubmit: (payload: Partial<Supplier>) => void }) {
@@ -360,7 +368,7 @@ function OpeningStockForm({ products, warehouse, busy, onSubmit }: { products: P
   const today = businessDate();
   const [form, setForm] = useState({ productId: "", quantity: "", lotNumber: "", batchNumber: "", manufacturingDate: "", expiryDate: "", receivedDate: today, sourceReference: "", warehouse: warehouse.name, location: warehouse.locations[0] ?? "", landedCostPerUnit: "" });
   const change = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
-  return <form className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onSubmit={(event) => { event.preventDefault(); onSubmit({ ...form, landedCostPerUnit: form.landedCostPerUnit || "0" }); }}><label className="sm:col-span-2 lg:col-span-3"><span className={labelClass}>Canonical Product / Variant</span><select className={inputClass} required value={form.productId} onChange={(event) => change("productId", event.target.value)}><option value="">Select product</option>{products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.code} - {product.name}</option>)}</select></label><label><span className={labelClass}>Opening Quantity</span><input className={inputClass} type="number" min="0.0001" step="0.0001" required value={form.quantity} onChange={(event) => change("quantity", event.target.value)} /></label><label><span className={labelClass}>Lot Number</span><input className={inputClass} required value={form.lotNumber} onChange={(event) => change("lotNumber", event.target.value)} /></label><label><span className={labelClass}>Batch Number</span><input className={inputClass} required value={form.batchNumber} onChange={(event) => change("batchNumber", event.target.value)} /></label><label><span className={labelClass}>Manufacturing Date</span><input className={inputClass} type="date" required value={form.manufacturingDate} onChange={(event) => change("manufacturingDate", event.target.value)} /></label><label><span className={labelClass}>Expiry Date</span><input className={inputClass} type="date" min={form.manufacturingDate} required value={form.expiryDate} onChange={(event) => change("expiryDate", event.target.value)} /></label><label><span className={labelClass}>Historical Received Date</span><input className={inputClass} type="date" max={today} required value={form.receivedDate} onChange={(event) => change("receivedDate", event.target.value)} /></label><label><span className={labelClass}>Old LC / Source Reference</span><input className={inputClass} value={form.sourceReference} onChange={(event) => change("sourceReference", event.target.value)} placeholder="OPENING-STOCK if unknown" /></label><label><span className={labelClass}>Warehouse</span><input className={inputClass} required value={form.warehouse} onChange={(event) => change("warehouse", event.target.value)} /></label><label><span className={labelClass}>Rack / BIN Location</span><select className={inputClass} value={form.location} onChange={(event) => change("location", event.target.value)}>{warehouse.locations.map((location) => <option key={location}>{location}</option>)}</select></label><label><span className={labelClass}>Historical Landed Cost / Unit</span><input className={inputClass} type="number" min="0" step="0.01" value={form.landedCostPerUnit} onChange={(event) => change("landedCostPerUnit", event.target.value)} placeholder="Optional owner-only value" /></label><div className="rounded-md border border-cyan-200 bg-cyan-50 p-3 text-xs leading-5 text-cyan-900 sm:col-span-2">Posting creates one opening batch and one Receive movement. It does not alter any import case.</div><div className="flex items-end justify-end"><Button type="submit" variant="primary" icon={<Database className="h-4 w-4" />} disabled={busy}>Post Opening Batch</Button></div></form>;
+  return <form className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onSubmit={(event) => { event.preventDefault(); onSubmit({ ...form, landedCostPerUnit: form.landedCostPerUnit || "0" }); }}><label className="sm:col-span-2 lg:col-span-3"><span className={labelClass}>Product / Variant</span><select className={inputClass} required value={form.productId} onChange={(event) => change("productId", event.target.value)}><option value="">Select product</option>{products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.code} - {product.name}</option>)}</select></label><label><span className={labelClass}>Opening Quantity</span><input className={inputClass} type="number" min="0.0001" step="0.0001" required value={form.quantity} onChange={(event) => change("quantity", event.target.value)} /></label><label><span className={labelClass}>Lot Number</span><input className={inputClass} required value={form.lotNumber} onChange={(event) => change("lotNumber", event.target.value)} /></label><label><span className={labelClass}>Batch Number</span><input className={inputClass} required value={form.batchNumber} onChange={(event) => change("batchNumber", event.target.value)} /></label><label><span className={labelClass}>Manufacturing Date</span><input className={inputClass} type="date" required value={form.manufacturingDate} onChange={(event) => change("manufacturingDate", event.target.value)} /></label><label><span className={labelClass}>Expiry Date</span><input className={inputClass} type="date" min={form.manufacturingDate} required value={form.expiryDate} onChange={(event) => change("expiryDate", event.target.value)} /></label><label><span className={labelClass}>Historical Received Date</span><input className={inputClass} type="date" max={today} required value={form.receivedDate} onChange={(event) => change("receivedDate", event.target.value)} /></label><label><span className={labelClass}>Old LC / Source Reference</span><input className={inputClass} value={form.sourceReference} onChange={(event) => change("sourceReference", event.target.value)} placeholder="OPENING-STOCK if unknown" /></label><label><span className={labelClass}>Warehouse</span><input className={inputClass} required value={form.warehouse} onChange={(event) => change("warehouse", event.target.value)} /></label><label><span className={labelClass}>Rack / BIN Location</span><select className={inputClass} value={form.location} onChange={(event) => change("location", event.target.value)}>{warehouse.locations.map((location) => <option key={location}>{location}</option>)}</select></label><label><span className={labelClass}>Historical Landed Cost / Unit</span><input className={inputClass} type="number" min="0" step="0.01" value={form.landedCostPerUnit} onChange={(event) => change("landedCostPerUnit", event.target.value)} placeholder="Optional owner-only value" /></label><div className="rounded-md border border-cyan-200 bg-cyan-50 p-3 text-xs leading-5 text-cyan-900 sm:col-span-2">Posting creates one opening batch and one Receive movement. It does not alter any import case.</div><div className="flex items-end justify-end"><Button type="submit" variant="primary" icon={<Database className="h-4 w-4" />} disabled={busy}>Post Opening Batch</Button></div></form>;
 }
 
 function CustomerOpeningForm({ customers, busy, onSubmit }: { customers: Customer[]; busy: boolean; onSubmit: (payload: Partial<CustomerOpeningBalance>) => void }) {

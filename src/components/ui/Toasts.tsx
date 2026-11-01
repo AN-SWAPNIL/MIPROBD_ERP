@@ -12,7 +12,7 @@ export default function Toasts() {
   const { toasts, remove } = useToastStore();
 
   return (
-    <div className="fixed right-4 top-4 z-[70] grid w-[min(92vw,360px)] gap-2">
+    <div className="no-print fixed right-4 top-4 z-[70] grid w-[min(92vw,360px)] gap-2">
       {toasts.map((toast) => (
         <div className={clsx("rounded-lg border p-3 shadow-lg", tone[toast.kind])} key={toast.id}>
           <div className="flex items-start justify-between gap-3">

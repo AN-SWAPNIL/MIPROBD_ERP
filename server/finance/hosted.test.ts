@@ -1,0 +1,111 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { eq, inArray, sql } from "drizzle-orm";
+import { cashAccounts, employees, expenseCategories, expenses, financialPositionEntries, products, supplierSettlements, suppliers } from "../../database/schema.js";
+import { hostedHarness } from "../testing/hosted.js";
+import { businessDate } from "../../src/lib/date.js";
+import { AccountTransactionSchema, ExpenseSchema, FinancialPositionEntrySchema, ImportCaseSchema, SupplierSettlementSchema } from "../../src/domains/schemas.js";
+import { D, sum } from "../trading/money.js";
+
+test("hosted finance: operating expenses, private evidence, supplier payments and reversals reconcile across API instances", { skip: process.env.RUN_HOSTED_FINANCE_TESTS !== "true", timeout: 480000 }, async () => {
+  const h = await hostedHarness("finance"); const { expect, call, key, ctx } = h;
+  const today = businessDate(); const productIds: string[] = []; const supplierIds: string[] = []; const bankIds: string[] = []; const categoryIds: string[] = [];
+  let filePath: string | undefined; let linkedFile = false;
+  try {
+    const admin = await h.employee("Super Admin", ["view_financial_position", "view_sensitive_cost", "edit_sensitive_cost", "finalize_landed_cost"]);
+    const accounts = await h.employee("Accounts"); const secondAccounts = await h.employee("Accounts"); const md = await h.employee("Managing Director"); const sales = await h.employee("Sales Executive"); const warehouse = await h.employee("Warehouse Manager"); const importer = await h.employee("Import Officer");
+    const bank = await expect("/settings/accounts", admin.token, { name: `DEV TEST Finance Bank ${h.suffix}`, type: "Bank", balance: "1000.01" }, 201, key("bank")); bankIds.push(bank.id);
+    const balance = async (id = bank.id) => (await expect("/accounts", accounts.token)).find((row: { id: string }) => row.id === id).balance;
+    const category = await expect("/expense-categories", admin.token, { name: `DEV TEST Operating ${h.suffix}` }, 201, key("category")); categoryIds.push(category.id);
+    await expect("/expense-categories", accounts.token, { name: "Denied" }, 403, key("category-denied"));
+    await expect("/expense-categories", admin.token, { name: `  ${category.name.toUpperCase()}  ` }, 409, key("category-duplicate"));
+    const supplier = await expect("/suppliers", admin.token, { name: `DEV TEST Finance Supplier ${h.suffix}`, country: "China" }, 201); supplierIds.push(supplier.id);
+    const product = await expect("/products", admin.token, { code: `TEST-FIN-${h.suffix}`, name: "DEV TEST Finance Product", family: "Dialyzer", variant: "Test", unit: "pcs" }, 201); productIds.push(product.id);
+    const record = ImportCaseSchema.parse(await expect("/imports", admin.token, { supplierId: supplier.id, poNumber: `TEST-FIN-PO-${h.suffix}`, poDate: today, piNumber: "TEST-FIN-PI", paymentMode: "TT", ttReference: `TEST-FIN-TT-${h.suffix}`, currency: "BDT", exchangeRate: "1", items: [{ productId: product.id, quantity: "2", currency: "BDT", fobUnitForeign: "10", exchangeRate: "1", cbmMode: "MANUAL", totalCbm: "1" }] }, 201, key("import")));
+    const finalized = ImportCaseSchema.parse(await expect(`/imports/${record.id}/finalize`, admin.token, {}, 200, key("finalize"))); const originalSnapshot = structuredClone(finalized.snapshot);
+    assert.equal(finalized.snapshot?.totalShipmentCostBdt, "20.00");
+    console.log("Hosted finance: canonical TA/DA, snapshots and category history");
+    const input = { date: today, categoryId: category.id, subtype: "General", expenseFor: "Office", amount: "100.01", paidFromAccountId: bank.id, remarks: "DEV TEST Office expenditure", enteredByName: "Forged", categoryName: "Forged" };
+    for (const actor of [sales, warehouse, importer]) await expect("/expenses", actor.token, undefined, 403);
+    await expect("/expenses", md.token, input, 403, key("md-expense"));
+    const general = ExpenseSchema.parse(await expect("/expenses", accounts.token, input, 201, key("general")));
+    assert.equal(general.categoryName, category.name); assert.notEqual(general.enteredByName, "Forged"); assert.equal(await balance(), "900.00");
+    assert.equal((await expect("/expenses", accounts.token, input, 201, key("general"))).id, general.id); assert.equal(await balance(), "900.00");
+    const tada = ExpenseSchema.parse(await expect("/expenses", accounts.token, { ...input, subtype: "TA/DA", expenseFor: "Office", employeeId: sales.id, employee: "Forged", amount: "999", taAmount: "10.01", daAmount: "20.02" }, 201, key("tada")));
+    assert.equal(tada.amount, "30.03"); assert.equal(tada.expenseFor, "Employee"); assert.equal(tada.employeeId, sales.id); assert.equal(tada.employee, `DEV TEST finance ${sales.role}`); assert.equal(await balance(), "869.97");
+    await expect(`/expense-categories/${category.id}`, admin.token, { version: category.version, name: category.name + " Renamed" }, 200, { method: "PATCH" });
+    await expect(`/expense-categories/${category.id}`, admin.token, { version: category.version, active: false }, 409, { method: "PATCH" });
+    await expect(`/expense-categories/${category.id}`, admin.token, { version: category.version + 1, active: false }, 200, { method: "PATCH" });
+    await expect("/expenses", accounts.token, input, 422, key("inactive-category")); assert.equal(await balance(), "869.97");
+    await expect(`/expense-categories/${category.id}`, admin.token, { version: category.version + 2, active: true }, 200, { method: "PATCH" });
+    assert.equal((await expect("/expenses", md.token)).find((row: { id: string }) => row.id === general.id).categoryName, category.name);
+    await ctx.db.update(employees).set({ status: "Inactive" }).where(eq(employees.id, sales.id));
+    await expect("/expenses", accounts.token, { ...input, expenseFor: "Employee", employeeId: sales.id }, 422, key("inactive-employee"));
+    await ctx.db.update(employees).set({ status: "Active" }).where(eq(employees.id, sales.id));
+    assert.deepEqual((await expect(`/imports/${record.id}`, admin.token)).snapshot, originalSnapshot);
+    console.log("Hosted finance: private evidence stays private and links atomically");
+    const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6YV8AAAAASUVORK5CYII=", "base64");
+    const uploadInput = { purpose: "expense-receipt", fileName: "test-expense.png", mimeType: "image/png", sizeBytes: bytes.length };
+    await expect("/uploads", sales.token, uploadInput, 403);
+    const upload = await expect("/uploads", accounts.token, uploadInput, 201); filePath = upload.path;
+    const stored = await ctx.admin.storage.from(upload.bucket).uploadToSignedUrl(upload.path, upload.token, bytes, { contentType: "image/png" }); assert.equal(stored.error, null);
+    await expect(`/uploads/${upload.id}/complete`, accounts.token, {});
+    await expect(`/documents/${upload.id}`, secondAccounts.token, undefined, 403);
+    await expect("/expenses", admin.token, { ...input, amount: "0.01", attachmentDocumentId: upload.id }, 422, key("foreign-upload"));
+    const evidenced = ExpenseSchema.parse(await expect("/expenses", accounts.token, { ...input, amount: "0.01", attachmentDocumentId: upload.id }, 201, key("evidence"))); linkedFile = true;
+    assert.equal(evidenced.attachment?.sensitive, true); assert.equal(evidenced.attachmentName, uploadInput.fileName);
+    await expect(`/documents/${upload.id}`, sales.token, undefined, 403);
+    const document = await expect(`/documents/${upload.id}`, secondAccounts.token); const file = await fetch(document.url); assert.equal(file.ok, true);
+    await expect("/expenses", accounts.token, { ...input, amount: "0.01", attachmentDocumentId: upload.id }, 422, key("reused-evidence"));
+    console.log("Hosted finance: supplier references, payments, advances and immutable reversals");
+    const obligation = SupplierSettlementSchema.parse(await expect("/supplier-settlements", accounts.token, { date: today, supplierId: supplier.id, importId: record.id, reference: `TEST-PI-${h.suffix}`, entryType: "Obligation", amount: "120.00" }, 201, key("obligation")));
+    const paymentInput = { date: today, supplierId: supplier.id, importId: record.id, reference: obligation.reference, entryType: "Payment", amount: "50.02", accountId: bank.id, paymentReference: "TEST TRANSFER" };
+    const wrongSupplier = await expect("/suppliers", admin.token, { name: `DEV TEST Other Supplier ${h.suffix}`, country: "China" }, 201); supplierIds.push(wrongSupplier.id);
+    await expect("/supplier-settlements", accounts.token, { ...paymentInput, supplierId: wrongSupplier.id }, 422, key("wrong-supplier"));
+    const payment = SupplierSettlementSchema.parse(await expect("/supplier-settlements", accounts.token, paymentInput, 201, key("payment")));
+    assert.equal(await balance(), "819.94");
+    await expect("/supplier-settlements", accounts.token, { ...paymentInput, amount: "2000" }, 409, key("insufficient")); assert.equal(await balance(), "819.94");
+    await expect("/supplier-settlements", accounts.token, { ...paymentInput, amount: "70.00" }, 201, key("advance"));
+    const supplierRows = (await expect("/supplier-settlements", md.token)).filter((row: SupplierSettlementSchemaType) => row.supplierId === supplier.id && row.status === "Posted");
+    assert.equal(sum(supplierRows.map((row: SupplierSettlementSchemaType) => row.entryType === "Obligation" ? row.amount : new D(row.amount).negated().toString())).toFixed(2), "-0.02");
+    await expect(`/supplier-settlements/${payment.id}/reverse`, accounts.token, { reason: "DEV TEST reversed transfer" }, 200, key("reverse-payment"));
+    await expect(`/supplier-settlements/${payment.id}/reverse`, accounts.token, { reason: "DEV TEST reversed transfer" }, 200, key("reverse-payment")); assert.equal(await balance(), "799.96");
+    await expect(`/supplier-settlements/${obligation.id}/reverse`, accounts.token, { reason: "DEV TEST obligation correction" }, 200, key("reverse-obligation"));
+    assert.deepEqual((await expect(`/imports/${record.id}`, admin.token)).snapshot, originalSnapshot);
+    console.log("Hosted finance: shared-account concurrency and controlled vouchers/position");
+    const raceBank = await expect("/settings/accounts", admin.token, { name: `DEV TEST Finance Race ${h.suffix}`, type: "Cash", balance: "100.01" }, 201, key("race-bank")); bankIds.push(raceBank.id);
+    const race = await Promise.all([call("/expenses", accounts.token, { ...input, amount: "75.00", paidFromAccountId: raceBank.id }, key("race-expense")), call("/supplier-settlements", secondAccounts.token, { ...paymentInput, amount: "75.00", accountId: raceBank.id }, { ...key("race-supplier"), instance: 1 })]);
+    assert.deepEqual(race.map((row) => row.status).sort(), [201, 409]); assert.equal(await balance(raceBank.id), "25.01");
+    const voucher = AccountTransactionSchema.parse(await expect("/account-transactions", accounts.token, { date: today, accountId: bank.id, direction: "Out", amount: "10.01", sourceType: "Advance", partyName: "DEV TEST Employee", description: "DEV TEST authorized advance" }, 201, key("voucher")));
+    await expect(`/account-transactions/${voucher.id}/reverse`, accounts.token, { reason: "DEV TEST advance corrected" }, 200, key("reverse-voucher")); assert.equal(await balance(), "799.96");
+    const positionInput = { asOfDate: today, category: "Owner Capital", label: "DEV TEST verified capital", amount: "5000.01", reference: `TEST-BOARD-${h.suffix}` };
+    await expect("/financial-position", accounts.token, undefined, 403); await expect("/financial-position", accounts.token, positionInput, 403, key("position-denied"));
+    const position = FinancialPositionEntrySchema.parse(await expect("/financial-position", admin.token, positionInput, 201, key("position"))); assert.equal(await balance(), "799.96");
+    await expect(`/financial-position/${position.id}/reverse`, admin.token, { reason: "DEV TEST opening source correction" }, 200, key("reverse-position"));
+    await expect(`/expenses/${general.id}/reverse`, accounts.token, { reason: "DEV TEST expense correction" }, 200, key("reverse-general")); assert.equal(await balance(), "899.97");
+    const expenseJournal = (await expect("/account-transactions", accounts.token)).find((row: { sourceType: string; sourceId: string }) => row.sourceType === "Expense" && row.sourceId === tada.id);
+    await expect(`/account-transactions/${expenseJournal.id}/reverse`, accounts.token, { reason: "Cannot bypass the expense workflow" }, 409, key("bypass-expense"));
+    await assert.rejects(ctx.db.update(expenses).set({ status: "Reversed", reversedBy: admin.id, reversedAt: new Date(), reversalDate: today, reversalReason: "Missing compensating account inflow" }).where(eq(expenses.id, tada.id)));
+    await assert.rejects(ctx.db.update(expenses).set({ amount: "1" }).where(eq(expenses.id, tada.id)));
+    await assert.rejects(ctx.db.delete(supplierSettlements).where(eq(supplierSettlements.id, payment.id)));
+    await assert.rejects(ctx.db.update(financialPositionEntries).set({ label: "Tampered" }).where(eq(financialPositionEntries.id, position.id)));
+    const protectedTables = await ctx.db.execute<{ count: number }>(sql`select count(*)::int as count from pg_tables where schemaname = 'erp_private' and tablename in ('expenses','expense_categories','supplier_settlements','financial_position_entries') and not rowsecurity`); assert.equal(protectedTables.rows[0].count, 0);
+    assert.equal((await expect("/accounts", accounts.token, undefined, 200, { instance: 1 })).find((row: { id: string }) => row.id === bank.id).balance, "899.97");
+    if (process.env.RUN_BACKEND_BROWSER_TESTS === "true") {
+      const { financeBackendBrowserSmoke } = await import("../../scripts/finance-backend-browser-smoke.js");
+      await financeBackendBrowserSmoke(h.bases[0], admin.email, h.password, bank.id, category.id, supplier.id, h.suffix, md.email, sales.email);
+      assert.equal(await balance(), "899.97", "Browser-created postings and their reversals must leave the same bank balance");
+    }
+    console.log("Hosted finance passed; DEV TEST financial history and its attached evidence are retained.");
+  } finally {
+    try {
+      if (filePath && !linkedFile) await ctx.admin.storage.from("erp-documents").remove([filePath]);
+      if (productIds.length) await ctx.db.update(products).set({ active: false }).where(inArray(products.id, productIds));
+      if (supplierIds.length) await ctx.db.update(suppliers).set({ active: false }).where(inArray(suppliers.id, supplierIds));
+      if (bankIds.length) await ctx.db.update(cashAccounts).set({ active: false }).where(inArray(cashAccounts.id, bankIds));
+      if (categoryIds.length) await ctx.db.update(expenseCategories).set({ active: false }).where(inArray(expenseCategories.id, categoryIds));
+    } finally { await h.close(); }
+  }
+});
+
+type SupplierSettlementSchemaType = { supplierId: string; status: string; entryType: string; amount: string };

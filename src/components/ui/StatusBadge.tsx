@@ -9,6 +9,8 @@ const toneByStatus: Record<string, string> = {
   Approved: "bg-blue-50 text-blue-700 ring-blue-200",
   Posted: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   Ready: "bg-cyan-50 text-cyan-700 ring-cyan-200",
+  Blocked: "bg-rose-50 text-rose-700 ring-rose-200",
+  Review: "bg-amber-50 text-amber-700 ring-amber-200",
   Delivered: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   Normal: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   Success: "bg-emerald-50 text-emerald-700 ring-emerald-200",

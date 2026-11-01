@@ -1,13 +1,13 @@
 import clsx from "clsx";
 import { AlertCircle, ChevronDown, Inbox, LoaderCircle, X } from "lucide-react";
-import type { ComponentType, ReactNode } from "react";
+import { useEffect, type ComponentType, type ReactNode } from "react";
 import Button from "../components/ui/Button";
 
 export const inputClass =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100 disabled:bg-slate-100 disabled:text-slate-500";
+  "h-10 w-full rounded-md border border-blue-200 bg-[#fbfdff] px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-blue-300 focus:border-cyan-600 focus:bg-white focus:ring-2 focus:ring-cyan-100 disabled:bg-slate-100 disabled:text-slate-500";
 export const textareaClass =
-  "min-h-24 w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100 disabled:bg-slate-100";
-export const labelClass = "mb-1 block text-xs font-bold uppercase text-slate-500";
+  "min-h-24 w-full resize-y rounded-md border border-blue-200 bg-[#fbfdff] px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-blue-300 focus:border-cyan-600 focus:bg-white focus:ring-2 focus:ring-cyan-100 disabled:bg-slate-100";
+export const labelClass = "mb-1 block text-xs font-bold uppercase text-blue-900";
 
 export function Panel({
   title,
@@ -23,11 +23,11 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={clsx("overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm", className)}>
+    <section className={clsx("erp-panel min-w-0 overflow-hidden rounded-md border border-blue-200 bg-white shadow-sm", className)}>
       {title || actions ? (
-        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b border-blue-200 border-l-4 border-l-red-600 bg-blue-50/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            {title ? <h2 className="text-base font-bold text-slate-950">{title}</h2> : null}
+            {title ? <h2 className="text-base font-bold text-blue-950">{title}</h2> : null}
             {subtitle ? <p className="mt-0.5 text-xs leading-5 text-slate-500">{subtitle}</p> : null}
           </div>
           {actions ? <div className="flex shrink-0 flex-wrap gap-2">{actions}</div> : null}
@@ -50,12 +50,12 @@ export function Segmented<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="flex max-w-full gap-1 overflow-x-auto rounded-md border border-slate-200 bg-white p-1" role="tablist" aria-label={ariaLabel}>
+    <div className="flex max-w-full gap-1 overflow-x-auto rounded-md border border-blue-200 bg-blue-50/70 p-1" role="tablist" aria-label={ariaLabel}>
       {options.map((option) => (
         <button
           className={clsx(
             "flex h-9 shrink-0 items-center gap-2 rounded px-3 text-sm font-semibold transition",
-            value === option.value ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
+            value === option.value ? "bg-blue-950 text-white shadow-sm" : "text-blue-900 hover:bg-white"
           )}
           key={option.value}
           type="button"
@@ -65,7 +65,7 @@ export function Segmented<T extends string>({
         >
           {option.label}
           {option.count !== undefined ? (
-            <span className={clsx("rounded px-1.5 py-0.5 text-[10px]", value === option.value ? "bg-white/15" : "bg-slate-100 text-slate-500")}>
+            <span className={clsx("rounded px-1.5 py-0.5 text-[10px]", value === option.value ? "bg-white/15" : "bg-white text-blue-700")}>
               {option.count}
             </span>
           ) : null}
@@ -76,7 +76,7 @@ export function Segmented<T extends string>({
 }
 
 export function TableFrame({ children }: { children: ReactNode }) {
-  return <div className="w-full overflow-x-auto">{children}</div>;
+  return <div className="erp-table-frame min-w-0 max-w-full overflow-x-auto bg-white">{children}</div>;
 }
 
 export function Modal({
@@ -96,17 +96,23 @@ export function Modal({
   footer?: ReactNode;
   width?: string;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previous; };
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
       <button className="absolute inset-0 cursor-default" type="button" onClick={onClose} aria-label="Close dialog" />
       <div className={clsx("relative flex max-h-[94vh] w-full flex-col overflow-hidden rounded-t-md bg-white shadow-2xl sm:rounded-md", width)}>
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-3">
+        <div className="flex items-start justify-between gap-4 border-b border-blue-900 bg-blue-950 px-4 py-3 text-white">
           <div>
-            <h2 className="text-lg font-bold text-slate-950">{title}</h2>
-            {subtitle ? <p className="mt-0.5 text-xs leading-5 text-slate-500">{subtitle}</p> : null}
+            <h2 className="text-lg font-bold text-white">{title}</h2>
+            {subtitle ? <p className="mt-0.5 text-xs leading-5 text-blue-100">{subtitle}</p> : null}
           </div>
-          <button className="rounded p-1.5 text-slate-500 hover:bg-slate-100" type="button" onClick={onClose} aria-label="Close">
+          <button className="rounded p-1.5 text-blue-100 hover:bg-white/10 hover:text-white" type="button" onClick={onClose} aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -135,25 +141,25 @@ export function SectionAccordion({
   actions?: ReactNode;
 }) {
   return (
-    <details className="group overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm" open={defaultOpen}>
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-4 py-3">
+    <details className="group overflow-hidden rounded-md border border-blue-200 bg-white shadow-sm" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 border-l-4 border-l-red-600 bg-blue-50/70 px-4 py-3">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded bg-cyan-50 text-cyan-700"><Icon className="h-4 w-4" /></span>
         <div className="min-w-[140px] flex-1">
-          <h2 className="break-words text-sm font-bold text-slate-950 sm:text-base">{title}</h2>
+          <h2 className="break-words text-sm font-bold text-blue-950 sm:text-base">{title}</h2>
           {subtitle ? <p className="mt-0.5 truncate text-xs text-slate-500">{subtitle}</p> : null}
         </div>
         {status}
         <span onClick={(event) => event.preventDefault()}>{actions}</span>
         <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180" />
       </summary>
-      <div className="border-t border-slate-200">{children}</div>
+      <div className="border-t border-blue-200">{children}</div>
     </details>
   );
 }
 
 export function LoadingBlock({ label = "Loading data" }: { label?: string }) {
   return (
-    <div className="grid min-h-48 place-items-center rounded-md border border-slate-200 bg-white p-8 text-center">
+    <div className="grid min-h-48 place-items-center rounded-md border border-blue-200 bg-blue-50/50 p-8 text-center">
       <div><LoaderCircle className="mx-auto h-6 w-6 animate-spin text-cyan-700" /><p className="mt-2 text-sm font-semibold text-slate-600">{label}</p></div>
     </div>
   );

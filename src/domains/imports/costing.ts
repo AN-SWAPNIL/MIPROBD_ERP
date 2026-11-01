@@ -22,6 +22,7 @@ function precise(value: Decimal) {
 }
 
 function allocateRounded(total: Decimal, weights: { itemId: string; weight: Decimal }[]) {
+  if (weights.some((entry) => !entry.weight.isFinite() || entry.weight.lt(0))) throw new Error("Allocation weights must be finite and non-negative.");
   const weightTotal = weights.reduce((sum, entry) => sum.plus(entry.weight), new Decimal(0));
   if (weightTotal.lte(0)) {
     throw new Error("Allocation basis total must be greater than zero.");
@@ -84,6 +85,8 @@ function allocationWeights(items: ImportItem[], cost: ImportCostLine) {
 export function calculateLandedCost(importId: string, items: ImportItem[], costs: ImportCostLine[]): LandedCostPreview {
   const validationErrors: string[] = [];
   const allocations: CostAllocation[] = [];
+  if (new Set(items.map((item) => item.id)).size !== items.length) validationErrors.push("Import item IDs must be unique.");
+  if (new Set(costs.map((cost) => cost.id)).size !== costs.length) validationErrors.push("Cost line IDs must be unique.");
 
   for (const item of items) {
     if (decimal(item.quantity).lte(0)) validationErrors.push(`${item.productName}: quantity must be greater than zero.`);
@@ -92,7 +95,15 @@ export function calculateLandedCost(importId: string, items: ImportItem[], costs
 
   for (const cost of costs) {
     const eligible = eligibleItems(items, cost);
-    const total = convertedCost(cost);
+    const total = convertedCost(cost).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    if (cost.appliesToItemIds.some((id) => !items.some((item) => item.id === id))) {
+      validationErrors.push(`${cost.name}: allocation scope contains an unknown product.`);
+      continue;
+    }
+    if (cost.currency !== "BDT" && (!decimal(cost.exchangeRate).isFinite() || decimal(cost.exchangeRate).lte(0))) {
+      validationErrors.push(`${cost.name}: exchange rate must be greater than zero.`);
+      continue;
+    }
     if (total.lte(0)) {
       validationErrors.push(`${cost.name}: amount must be greater than zero.`);
       continue;
@@ -107,6 +118,8 @@ export function calculateLandedCost(importId: string, items: ImportItem[], costs
       let basisLabels = new Map<string, string>();
       if (cost.allocationMethod === "MANUAL") {
         const manual = cost.manualSplits ?? [];
+        if (new Set(manual.map((split) => split.importItemId)).size !== manual.length) throw new Error(`${cost.name}: duplicate manual split product.`);
+        if (manual.some((split) => decimal(split.amountBdt).lt(0) || decimal(split.amountBdt).decimalPlaces() > 2)) throw new Error(`${cost.name}: manual amounts must be non-negative and have at most two decimals.`);
         const manualTotal = manual.reduce((sum, split) => sum.plus(decimal(split.amountBdt)), new Decimal(0));
         if (!manualTotal.eq(total)) throw new Error(`${cost.name}: manual split must equal Tk ${money(total)}.`);
         if (manual.some((split) => !eligible.some((item) => item.id === split.importItemId))) {
@@ -123,7 +136,7 @@ export function calculateLandedCost(importId: string, items: ImportItem[], costs
       for (const item of eligible) {
         const allocated = rounded.get(item.id) ?? new Decimal(0);
         const share = total.eq(0) ? new Decimal(0) : allocated.div(total).mul(100);
-        const perUnit = allocated.div(decimal(item.quantity));
+        const perUnit = allocated.div(decimal(item.quantity).gt(0) ? decimal(item.quantity) : new Decimal(1));
         allocations.push({
           costLineId: cost.id,
           costName: cost.name,
@@ -160,6 +173,7 @@ export function calculateLandedCost(importId: string, items: ImportItem[], costs
       additionalPerUnitBdt: money(additional.div(safeQuantity)),
       finalTotalBdt: money(total),
       finalPerUnitBdt: money(total.div(safeQuantity)),
+      authoritativeUnitCostBdt: total.div(safeQuantity).toFixed(10),
       components
     };
   });

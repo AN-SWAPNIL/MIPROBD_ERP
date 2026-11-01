@@ -1,0 +1,1 @@
+ALTER TABLE "erp_private"."supplier_replacement_receipts" ALTER COLUMN "state" SET DEFAULT 'Submitted';

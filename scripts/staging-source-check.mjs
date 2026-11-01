@@ -1,0 +1,12 @@
+import { execFileSync } from "node:child_process";
+import { dirname,join } from "node:path";
+const command=execFileSync("where.exe",["vercel.cmd"],{encoding:"utf8"}).trim().split(/\r?\n/)[0];
+const cli=join(dirname(command),"node_modules","vercel","dist","index.js");
+const output=execFileSync(process.execPath,[cli,"deploy","--dry","--format=json","--project","mipro-erp-staging","--scope","answapnil2003-5154s-projects"],{encoding:"utf8",stdio:["ignore","pipe","pipe"],timeout:60000,maxBuffer:4*1024*1024});
+const payload=JSON.parse(output.slice(output.indexOf("{")));
+const files=payload.files??payload.included??[];
+if(!files.length)throw new Error("Cannot verify the deployment source manifest.");
+const paths=files.map(f=>String(f.path??f).replaceAll("\\","/"));
+if(paths.some(p=>/^(artifacts|files|\.git|\.vercel|\.supabase|\.aws|\.codex|\.agents)(\/|$)/i.test(p)||/(^|\/)\.env(?:$|\.(?!example$|sample$))/i.test(p)||/\.(?:backup|pem|log)$/i.test(p)))throw new Error("Private deployment source detected; upload is blocked.");
+for(const required of["api/index.ts","server/index.ts","package.json","vercel.json"])if(!paths.includes(required))throw new Error(`Missing deployment input ${required}`);
+console.log(JSON.stringify({verified:true,framework:payload.framework,fileCount:files.length,privateFilesIncluded:0,totalSize:payload.totalSize}));

@@ -1,48 +1,41 @@
 import { create } from "zustand";
-import { SESSION_KEY, apiClient } from "../api/client";
-import type { Role, Session, User } from "../../types";
+import { apiClient } from "../api/client";
+import { API_BASE_URL, SESSION_EVENT, SESSION_KEY, readSession, saveSession } from "./transport";
+import { foundationMode } from "../runtime";
+import type { Session, User } from "../../types";
 
 type AuthState = {
   session: Session | null;
   login: (email: string, password: string) => Promise<void>;
-  signupRequest: (payload: { id: string; name: string; email: string; requestedRole: Role; phone: string; company: string }) => Promise<void>;
+  refreshSession: () => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   resetPassword: (email: string, password: string) => Promise<void>;
   logout: () => void;
   updateUser: (user: User) => void;
 };
 
-function loadSession(): Session | null {
-  const raw = window.localStorage.getItem(SESSION_KEY);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as Session;
-  } catch {
-    window.localStorage.removeItem(SESSION_KEY);
-    return null;
-  }
-}
-
 function persistSession(session: Session | null) {
-  if (session) {
-    window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  } else {
-    window.localStorage.removeItem(SESSION_KEY);
-  }
+  saveSession(session);
 }
+
+let endingSession: Promise<unknown> | null = null;
 
 export const useAuthStore = create<AuthState>((set, get) => ({
-  session: loadSession(),
+  session: readSession(),
   async login(email, password) {
+    // Let the old logout clear its cookies before a new sign-in sets replacement cookies.
+    await endingSession;
     const response = await apiClient.login(email, password);
     persistSession(response.data);
     set({ session: response.data });
   },
-  async signupRequest(payload) {
-    await apiClient.signupRequest({ ...payload, status: "Pending" });
+  async refreshSession() {
+    const current = get().session;
+    if (!current) return;
+    const response = await apiClient.me();
+    if (get().session?.token !== current.token) return;
+    persistSession(response.data);
+    set({ session: response.data });
   },
   async forgotPassword(email) {
     await apiClient.forgotPassword(email);
@@ -51,6 +44,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await apiClient.resetPassword(email, password);
   },
   logout() {
+    const current = get().session;
+    if (foundationMode && current) endingSession = fetch(`${API_BASE_URL}/api/auth/logout`, { method: "POST", keepalive: true, signal: AbortSignal.timeout(10000), headers: { "Content-Type": "application/json", Authorization: `Bearer ${current.token}` }, body: "{}" }).catch(() => {}).finally(() => { endingSession = null; });
     persistSession(null);
     set({ session: null });
   },
@@ -64,6 +59,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ session: updatedSession });
   }
 }));
+
+window.addEventListener(SESSION_EVENT, () => useAuthStore.setState({ session: readSession() }));
+window.addEventListener("storage", (event) => {
+  if (event.key === SESSION_KEY) useAuthStore.setState({ session: readSession() });
+});
 
 export function useEffectiveRole() {
   return useAuthStore((state) => state.session?.user.role ?? "Sales Executive");

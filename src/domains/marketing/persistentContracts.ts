@@ -1,0 +1,26 @@
+import { z } from "zod";
+import { RoleSchema, UserSchema } from "../schemas.js";
+
+export const manualActivityKinds = ["CUSTOMER_CONTACT", "CUSTOMER_VISIT", "DOCTOR_MEETING", "PROCUREMENT_MEETING", "DEALER_VISIT", "PRODUCT_PRESENTATION", "PRODUCT_DEMONSTRATION", "SAMPLE_DELIVERED", "NEGOTIATION_UPDATE", "TENDER_FOLLOW_UP", "COLLECTION_VISIT", "TRAINING_SESSION", "SERVICE_FOLLOW_UP", "MARKET_SURVEY", "OFFICE_COORDINATION", "GENERAL_NOTE"] as const;
+export const scoreEvents = ["NEW_QUALIFIED_CUSTOMER", "VERIFIED_CUSTOMER_VISIT", "QUALIFIED_LEAD", "QUOTATION_SUBMITTED", "ORDER_RECEIVED", "PAYMENT_COLLECTED", "FOLLOW_UP_COMPLETED"] as const;
+export const employeeRefSchema = z.object({ id: z.string(), name: z.string(), employeeCode: z.string(), title: z.string(), department: z.string(), territory: z.string(), phone: z.string(), role: RoleSchema, status: z.enum(["Active", "Pending", "Inactive"]), managerId: z.string().nullable(), managerName: z.string(), version: z.number().int(), avatarId: z.string().nullable() });
+export const employeeAccessSchema = UserSchema.extend({ version: z.number().int() });
+export const pageSchema = <T extends z.ZodType>(row: T) => z.object({ rows: row.array(), total: z.number().int(), page: z.number().int(), pageSize: z.number().int() });
+export const attachmentSchema = z.object({ id: z.string(), fileName: z.string(), mimeType: z.string(), sizeBytes: z.number() });
+export const activityRowSchema = z.object({ id: z.string(), reference: z.string(), employeeId: z.string(), employee: z.string(), employeeCode: z.string(), territory: z.string(), type: z.string(), occurredAt: z.string(), submittedAt: z.string().nullable(), status: z.enum(["Draft", "Submitted", "Voided"]), leadId: z.string().nullable(), customerId: z.string().nullable(), subject: z.string(), productIds: z.string().array(), purpose: z.string(), remarks: z.string(), nextFollowUpAt: z.string().nullable(), version: z.number().int(), voidReason: z.string().nullable(), attachments: attachmentSchema.array(), verification: z.literal("MANUAL") });
+export const leadRowSchema = z.object({ id: z.string(), reference: z.string(), assignedTo: z.string(), employee: z.string(), organization: z.string(), organizationType: z.enum(["Hospital", "Clinic", "Dealer", "Pharmacy", "Other"]), contact: z.string(), phone: z.string(), email: z.string(), address: z.string(), source: z.string(), productIds: z.string().array(), stage: z.string(), manualStage: z.string(), notes: z.string(), lostReason: z.string(), customerId: z.string().nullable(), nextFollowUpAt: z.string().nullable(), createdAt: z.string(), version: z.number().int() });
+export const followUpRowSchema = z.object({ id: z.string(), assignedTo: z.string(), employee: z.string(), leadId: z.string().nullable(), customerId: z.string().nullable(), subject: z.string(), dueAt: z.string(), purpose: z.string(), status: z.enum(["Pending", "Overdue", "Completed", "Cancelled"]), outcome: z.string(), completedAt: z.string().nullable(), version: z.number().int() });
+export const planDataSchema = z.object({ notes: z.string(), priorities: z.string().array(), productIds: z.string().array(), plannedActivities: z.number().int(), visits: z.array(z.object({ customerId: z.string().optional(), leadId: z.string().optional(), subject: z.string(), purpose: z.string() })) });
+export const planRowSchema = z.object({ id: z.string(), employeeId: z.string(), employee: z.string(), kind: z.enum(["Daily", "Monthly"]), period: z.string(), status: z.enum(["Draft", "Submitted", "Approved", "Rejected"]), data: planDataSchema, reviewedBy: z.string(), reviewReason: z.string(), version: z.number().int() });
+export const targetRowSchema = z.object({ id: z.string(), employeeId: z.string(), employee: z.string(), month: z.string(), sales: z.string(), collections: z.string(), customers: z.number().int(), activities: z.number().int(), visits: z.number().int(), version: z.number().int() });
+export const scoreRuleSchema = z.object({ event: z.enum(scoreEvents), label: z.string(), points: z.number().int(), active: z.boolean(), version: z.number().int() });
+export const referenceDataSchema = z.object({ employees: employeeRefSchema.array(), customers: z.array(z.object({ id: z.string(), name: z.string(), assignedTo: z.string().nullable() })), leads: z.array(z.object({ id: z.string(), name: z.string(), assignedTo: z.string() })), products: z.array(z.object({ id: z.string(), code: z.string(), name: z.string() })), truncated: z.boolean() });
+export type EmployeeRef = z.infer<typeof employeeRefSchema>;
+export type PersistentActivity = z.infer<typeof activityRowSchema>;
+export type PersistentLead = z.infer<typeof leadRowSchema>;
+export type PersistentFollowUp = z.infer<typeof followUpRowSchema>;
+export type PersistentPlan = z.infer<typeof planRowSchema>;
+export type PersistentTarget = z.infer<typeof targetRowSchema>;
+export type ScoreRule = z.infer<typeof scoreRuleSchema>;
+export type WorkforceReferences = z.infer<typeof referenceDataSchema>;
+export type PlanData = z.infer<typeof planDataSchema>;

@@ -7,6 +7,7 @@ import { z } from "zod";
 import Button from "../../components/ui/Button";
 import { apiClient } from "../../lib/api/client";
 import { useAuthStore } from "../../lib/auth/session";
+import { demoMode, foundationMode } from "../../lib/runtime";
 import { useToastStore } from "../../lib/ui/toast";
 import AuthShell from "./AuthShell";
 
@@ -29,11 +30,12 @@ export default function LoginPage() {
   const pushToast = useToastStore((store) => store.push);
   const [formError, setFormError] = useState<string | null>(null);
   const { register, handleSubmit, setValue } = useForm<LoginValues>({
-    defaultValues: { email: "superadmin@mipro.local", password: "password123" }
+    defaultValues: { email: demoMode ? "superadmin@mipro.local" : "", password: demoMode ? "password123" : "" }
   });
   const demoUsers = useQuery({
     queryKey: ["demo-users"],
-    queryFn: async () => (await apiClient.demoUsers()).data
+    queryFn: async () => (await apiClient.demoUsers()).data,
+    enabled: demoMode
   });
 
   const submit = async (values: LoginValues) => {
@@ -46,14 +48,14 @@ export default function LoginPage() {
     try {
       await login(parsed.data.email, parsed.data.password);
       pushToast({ kind: "success", title: "Signed in", message: "Role-based ERP session started." });
-      navigate(state?.from ?? "/app/dashboard", { replace: true });
+      navigate(foundationMode ? "/backend" : state?.from ?? "/app/dashboard", { replace: true });
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Login failed.");
     }
   };
 
   return (
-    <AuthShell title="Sign in to ERP" subtitle="Use one of the demo accounts or enter the assigned ERP credentials. Role access is enforced after login.">
+    <AuthShell title="Sign in to MIPRO ERP" subtitle={demoMode ? "Demo mode is active. Select a role account or enter an assigned credential." : "Enter your assigned employee credentials. Access is controlled by role and capability."}>
       <form className="grid gap-4" onSubmit={handleSubmit(submit)}>
         {formError ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{formError}</div> : null}
         <label>
@@ -69,19 +71,19 @@ export default function LoginPage() {
         </Button>
       </form>
 
-      <div className="mt-5 flex flex-wrap justify-between gap-2 text-sm">
-        <Link className="font-semibold text-cyan-700 hover:text-cyan-800" to="/signup">
-          Request access
-        </Link>
+      <div className="mt-5 flex justify-end text-sm">
         <Link className="font-semibold text-cyan-700 hover:text-cyan-800" to="/forgot-password">
           Forgot password?
         </Link>
       </div>
 
-      <div className="mt-6">
-        <p className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Demo role selector</p>
+      {demoMode ? <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-4">
+        <p className="text-xs font-bold uppercase text-amber-900">Demo role accounts</p>
+        <p className="mb-3 mt-1 text-xs text-amber-800">Select an account to fill the form. Password: <strong>password123</strong></p>
+        {demoUsers.isLoading ? <p className="text-sm font-semibold text-slate-600">Loading role accounts...</p> : null}
+        {demoUsers.isError ? <p className="mb-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">Demo accounts could not be loaded. Restart or redeploy both the website and API with demo mode enabled.</p> : null}
         <div className="grid gap-2 sm:grid-cols-2">
-          {(demoUsers.data ?? []).map((user) => (
+          {(demoUsers.data ?? []).filter((user, index, users) => users.findIndex((candidate) => candidate.role === user.role) === index).map((user) => (
             <button
               className="rounded-md border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-cyan-300 hover:bg-cyan-50"
               key={user.email}
@@ -89,6 +91,7 @@ export default function LoginPage() {
               onClick={() => {
                 setValue("email", user.email);
                 setValue("password", "password123");
+                setFormError(null);
               }}
             >
               <strong className="block text-sm text-slate-950">{user.role}</strong>
@@ -96,7 +99,7 @@ export default function LoginPage() {
             </button>
           ))}
         </div>
-      </div>
+      </div> : null}
     </AuthShell>
   );
 }

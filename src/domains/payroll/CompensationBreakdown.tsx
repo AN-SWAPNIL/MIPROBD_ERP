@@ -1,0 +1,8 @@
+import type { PayrollLineSnapshot } from "./contracts";
+import { Decimal } from "decimal.js";
+import { formatMoney } from "../../utils/precise";
+import { Panel,TableFrame } from "../components";
+export default function CompensationBreakdown({lines}:{lines:{id:string;snapshot:Pick<PayrollLineSnapshot,"employeeName"|"employeeCode"|"compensationParts">}[]}){
+ const split=lines.filter(l=>l.snapshot.compensationParts?.length);if(!split.length)return null;
+ return <Panel title="Approved Compensation Periods"><div className="divide-y divide-blue-100">{split.map(l=><div key={l.id}><h3 className="break-words bg-blue-50/50 p-4 text-sm font-semibold text-blue-950">{l.snapshot.employeeName} | {l.snapshot.employeeCode}</h3><TableFrame><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-blue-50 text-blue-950"><tr>{["Effective Period / Policy","Earned Factor","Fixed Earnings","Overtime","Earnings Evidence"].map(h=><th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{l.snapshot.compensationParts!.map(p=><tr className="border-t border-blue-100" key={p.profileId}><td className="p-3">{p.from} to {p.to}<small className="block break-words">{p.proofReference}</small></td><td className="p-3">{p.salaryFactor}</td><td className="p-3">{formatMoney(Object.values(p.components).reduce((sum,value)=>sum.plus(value),new Decimal(0)).toFixed(2))}</td><td className="p-3">{formatMoney(p.overtime)}<small className="block">{p.overtimeHours} hours x {p.data.overtimeRate}</small></td><td className="max-w-72 break-words p-3">{p.earningsProof}</td></tr>)}</tbody></table></TableFrame></div>)}</div></Panel>;
+}

@@ -2,13 +2,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { workspacePath } from "../../lib/runtime";
 import PageHeader from "../../components/ui/PageHeader";
 import Button from "../../components/ui/Button";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import StatusBadge from "../../components/ui/StatusBadge";
 import { ErrorBlock, LoadingBlock, Panel, TableFrame, inputClass } from "../components";
 import { importService } from "../services";
-import { useEffectiveRole } from "../../lib/auth/session";
+import { useAuthStore } from "../../lib/auth/session";
+import { hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
 import { useToastStore } from "../../lib/ui/toast";
 import { formatNumber } from "../../utils/format";
 
@@ -16,12 +18,13 @@ export default function ImportsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const role = useEffectiveRole();
+  const user = useAuthStore((state) => state.session?.user);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const pushToast = useToastStore((state) => state.push);
   const query = useQuery({ queryKey: ["imports"], queryFn: importService.list });
-  const canEdit = ["Super Admin", "Import Officer"].includes(role);
+  const canCreate = hasEffectivePermission(user, "import", "create");
+  const canDelete = hasEffectivePermission(user, "import", "delete");
   const deletion = useMutation({
     mutationFn: (id: string) => importService.remove(id),
     onSuccess: () => {
@@ -53,7 +56,7 @@ export default function ImportsPage() {
         eyebrow="Import operations"
         title="Imports"
         subtitle="One connected record from PI and LC/TT through shipment, cost allocation, finalization and warehouse receipt."
-        actions={canEdit ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate("/app/imports/new")}>New Import</Button> : undefined}
+        actions={canCreate ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate(workspacePath("/app/imports/new"))}>New Import</Button> : undefined}
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -101,10 +104,10 @@ export default function ImportsPage() {
                   <td className="px-4 py-3"><StatusBadge status={record.status} /></td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      {canEdit && ["Draft", "PI Received", "Cancelled"].includes(record.status) && !record.snapshot ? (
+                      {canDelete && ["Draft", "PI Received", "Cancelled"].includes(record.status) && !record.snapshot ? (
                         <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => setDeleteId(record.id)} aria-label="Delete import" title="Delete import" />
                       ) : null}
-                      <Button variant="ghost" icon={<ArrowRight className="h-4 w-4" />} onClick={() => navigate("/app/imports/" + record.id)}>Open</Button>
+                      <Button variant="ghost" icon={<ArrowRight className="h-4 w-4" />} onClick={() => navigate(workspacePath("/app/imports/" + record.id))}>Open</Button>
                     </div>
                   </td>
                 </tr>

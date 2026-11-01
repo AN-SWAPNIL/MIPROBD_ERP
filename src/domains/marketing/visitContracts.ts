@@ -1,0 +1,12 @@
+import { z } from "zod";
+export const visitPolicyDataSchema=z.object({maxAgeSeconds:z.number().int().min(10).max(300),accuracyMeters:z.number().min(10).max(2000),radiusMeters:z.number().min(25).max(2000),photoRetentionDays:z.number().int().min(1).max(365),privacyApproved:z.boolean()}).strict();
+export const defaultVisitPolicy={maxAgeSeconds:30,accuracyMeters:100,radiusMeters:150,photoRetentionDays:30,privacyApproved:false};
+export type VisitPolicyData=z.infer<typeof visitPolicyDataSchema>;
+export const positionSchema=z.object({latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180),accuracy:z.number().finite().positive().max(100000),capturedAt:z.iso.datetime({offset:true})}).strict();
+export type VisitPosition=z.infer<typeof positionSchema>;
+export const visitPolicySchema=z.object({version:z.number().int(),data:visitPolicyDataSchema,scoringEnabled:z.literal(false)});
+export const visitRowSchema=z.object({id:z.string(),reference:z.string(),employeeId:z.string(),employee:z.string(),employeeCode:z.string(),customerId:z.string().nullable(),leadId:z.string().nullable(),subject:z.string(),purpose:z.string(),receivedAt:z.string(),completedAt:z.string().nullable(),status:z.enum(["CheckedIn","Completed","Voided"]),quality:z.enum(["LOCATION_CAPTURED","POOR_ACCURACY","STALE","NO_LOCATION"]),match:z.enum(["NO_REFERENCE","APPROX_MATCH","OUTSIDE","UNCERTAIN","NO_LOCATION"]),review:z.enum(["Pending","Accepted","Rejected"]),position:positionSchema.nullable(),distanceMeters:z.number().nullable(),photoId:z.string().nullable(),photoMethod:z.enum(["IN_APP_CAMERA","FILE_SELECTED","NONE"]),locationReason:z.string(),photoReason:z.string(),outcome:z.string(),version:z.number().int(),policyVersion:z.number().int(),activityId:z.string().nullable()});
+export const visitEventSchema=z.object({id:z.string(),type:z.string(),recordedAt:z.string(),actor:z.string(),details:z.record(z.string(),z.unknown())});
+export const siteLocationSchema=z.object({id:z.string(),customerId:z.string(),latitude:z.number(),longitude:z.number(),source:z.string(),version:z.number().int(),confirmedBy:z.string(),confirmedAt:z.string()});
+export const visitDetailSchema=z.object({visit:visitRowSchema,events:visitEventSchema.array(),policySnapshot:visitPolicySchema.omit({scoringEnabled:true}),site:siteLocationSchema.nullable()});
+export type FieldVisit=z.infer<typeof visitRowSchema>;

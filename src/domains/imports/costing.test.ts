@@ -87,3 +87,31 @@ test("zero quantity is reported without producing invalid per-unit strings", () 
   assert.match(result.validationErrors[0], /quantity must be greater than zero/i);
   assert.equal(result.products[0].finalPerUnitBdt, "1000.00");
 });
+
+test("foreign manual splits reconcile against the rounded BDT amount", () => {
+  const result = calculateLandedCost("imp", items, [cost("MANUAL", { currency: "USD", amountForeign: "10", exchangeRate: "120.1234", manualSplits: [{ importItemId: "item-a", amountBdt: "300.00" }, { importItemId: "item-b", amountBdt: "901.23" }] })]);
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.totalAdditionalCostBdt, "1201.23");
+});
+
+test("rejects negative, duplicate, overprecise and unknown manual allocations", () => {
+  for (const manualSplits of [
+    [{ importItemId: "item-a", amountBdt: "-1" }, { importItemId: "item-b", amountBdt: "101" }],
+    [{ importItemId: "item-a", amountBdt: "50" }, { importItemId: "item-a", amountBdt: "50" }],
+    [{ importItemId: "item-a", amountBdt: "50.001" }, { importItemId: "item-b", amountBdt: "49.999" }],
+    [{ importItemId: "missing", amountBdt: "100" }]
+  ]) assert.ok(calculateLandedCost("imp", items, [cost("MANUAL", { manualSplits })]).validationErrors.length);
+  assert.match(calculateLandedCost("imp", items, [cost("QUANTITY", { appliesToItemIds: ["missing"] })]).validationErrors[0], /unknown product/);
+});
+
+test("rejects invalid exchange rates and negative allocation weights", () => {
+  assert.match(calculateLandedCost("imp", items, [cost("QUANTITY", { currency: "USD", exchangeRate: "0" })]).validationErrors[0], /exchange rate/);
+  assert.match(calculateLandedCost("imp", [{ ...items[0], totalCbm: "-1" }, items[1]], [cost("CBM")]).validationErrors[0], /non-negative/);
+});
+
+test("keeps a high-precision unit cost separately from the two-decimal display", () => {
+  const result = calculateLandedCost("imp", [{ ...items[0], quantity: "3", fobTotalBdt: "100.00" }], []);
+  assert.equal(result.products[0].finalPerUnitBdt, "33.33");
+  assert.equal(result.products[0].authoritativeUnitCostBdt, "33.3333333333");
+  assert.equal(result.totalShipmentCostBdt, "100.00");
+});

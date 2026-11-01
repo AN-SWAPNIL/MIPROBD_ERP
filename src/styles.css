@@ -46,8 +46,74 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.report-print-header {
+  background: rgba(30, 41, 59, 0.72);
+  color: #ffffff;
+}
+
+.report-print-header > th,
+.report-print-surface,
+.report-print-table > tbody,
+.report-print-table > tbody > tr,
+.report-print-table > tbody > tr > td {
+  background: transparent !important;
+}
+
+.letterhead-sheet [class~="bg-white/90"],
+.letterhead-sheet [class~="bg-white"],
+.letterhead-sheet [class~="bg-slate-50"] {
+  background: transparent !important;
+}
+
+.letterhead-sheet {
+  overflow-wrap: anywhere;
+}
+
+.letterhead-sheet {
+  overflow-wrap: anywhere;
+}
+
+.letterhead-sheet table > thead > tr,
+.letterhead-sheet [class~="bg-slate-800"] {
+  background: rgba(30, 41, 59, 0.72);
+  color: #ffffff;
+}
+
+.transaction-print-flow table > thead {
+  display: table-header-group;
+}
+
+.transaction-print-flow tr,
+.transaction-print-flow dl,
+.transaction-print-flow .grid {
+  break-inside: avoid;
+}
+
+@media screen {
+  .app-content-shell:has(.print-preview) {
+    transition: none;
+  }
+
+  .print-preview .print-sheet {
+    zoom: var(--print-preview-zoom, 1);
+  }
+
+  .erp-table-frame > table > thead {
+    background: #172554 !important;
+    color: #ffffff !important;
+  }
+
+  .erp-table-frame > table > thead th {
+    color: inherit !important;
+  }
+
+  .erp-table-frame > table > tbody > tr:hover {
+    background: #ecfeff;
+  }
+}
+
 @page {
-  size: A4;
+  size: 210mm 297mm;
   margin: 0;
 }
 
@@ -66,18 +132,43 @@ button:disabled {
 }
 
 @media print {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .transaction-print-flow table > thead {
+    display: table-row-group;
+  }
+
   html,
   body {
     width: 210mm;
+    min-width: 210mm;
+    margin: 0 !important;
+    padding: 0 !important;
     background: #ffffff !important;
   }
 
-  header,
-  aside,
+  #root {
+    width: 210mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .app-header,
+  .app-sidebar,
   nav,
   button,
   .no-print {
     display: none !important;
+  }
+
+  .app-content-shell {
+    min-height: 0 !important;
+    padding-left: 0 !important;
   }
 
   main {
@@ -87,31 +178,53 @@ button:disabled {
     padding: 0 !important;
   }
 
+  .letterhead-sheet {
+    width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    margin: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
   .print-preview {
+    display: block !important;
+    gap: 0 !important;
     overflow: visible !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    margin: 0 !important;
+  }
+
+  .backend-workspace,
+  .backend-content-shell {
+    min-height: 0 !important;
+    width: 210mm !important;
+    max-width: none !important;
+    margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
   }
 
   .print-sheet {
+    zoom: 1 !important;
     width: 210mm !important;
     min-height: 297mm !important;
     border: 0 !important;
     box-shadow: none !important;
+    break-after: page;
+    break-inside: avoid;
+    page-break-after: always;
     page-break-inside: avoid;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
 
-  main:has(> .print-report-sheet) > :not(.print-report-sheet) {
-    display: none !important;
+  .print-sheet:last-child {
+    break-after: auto;
+    page-break-after: auto;
   }
 
-  .print-report-sheet {
-    display: block !important;
-    width: 210mm;
-    min-height: 297mm;
-    print-color-adjust: exact;
-    -webkit-print-color-adjust: exact;
-  }
 }
