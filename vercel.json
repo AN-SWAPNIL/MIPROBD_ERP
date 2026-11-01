@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": { "deploymentEnabled": { "prototype": true, "*": false } },
   "functions": {
     "api/index.ts": {
       "includeFiles": "server/assets/**"

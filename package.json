@@ -9,7 +9,7 @@
     "dev:server": "npm run dev:api",
     "server": "tsx server/index.ts",
     "dev:web": "vite --host 0.0.0.0",
-    "build": "tsc -b && npm run typecheck:api && vite build",
+    "build": "node scripts/check-prototype.mjs && tsc -b && npm run typecheck:api && vite build",
     "typecheck:api": "tsc --noEmit --ignoreConfig --module NodeNext --moduleResolution NodeNext --target ES2022 --esModuleInterop --allowSyntheticDefaultImports --skipLibCheck api/index.ts server/index.ts",
     "lint": "eslint .",
     "test": "tsx --test src/domains/imports/costing.test.ts src/lib/permissions/effectiveAccess.test.ts src/domains/employees/employeeReports.test.ts src/domains/reports/reportFilters.test.ts server/salesWorkspace.test.ts",

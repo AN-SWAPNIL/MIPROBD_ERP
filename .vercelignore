@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.git
+.git/**
+.vercel/**
+/artifacts
+/files
+node_modules/**
+dist/**
+*.log
+*.tsbuildinfo

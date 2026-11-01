@@ -140,7 +140,7 @@ import {
 } from "./data.js";
 
 try {
-  loadEnvFile();
+  loadEnvFile(new URL("../config/prototype.env", import.meta.url));
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
