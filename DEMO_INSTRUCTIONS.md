@@ -1,5 +1,7 @@
 # MIPRO ERP Demo Instructions
 
+> Historical mock walkthrough: use the `prototype` branch and its README for these demo accounts and in-memory behaviors. `dev` and `main` use real Supabase authentication, not the passwords below. Current environment instructions are in `BRANCHES_AND_ENVIRONMENTS.md` and `MANUAL_SETUP.md`.
+
 ## Fast Start
 
 ```powershell

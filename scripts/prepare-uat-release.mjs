@@ -23,7 +23,7 @@ for (const entry of files) {
 }
 paths.sort();
 for (const path of paths) if (isAbsolute(path) || path.split("/").includes("..") || /^(artifacts|files|\.git|\.vercel|\.supabase|\.aws|\.codex|\.agents|node_modules|dist)(\/|$)/i.test(path) || /(^|\/)\.env(?:$|\.(?!example$|sample$))/i.test(path) || /\.(?:backup|pem|log)$/i.test(path)) throw new Error(`Private or unsafe source path detected; upload is blocked: ${path}`);
-for (const path of ["api/index.ts", "server/index.ts", "src/lib/files/attachments.ts", "package.json", "package-lock.json", "vercel.json"]) if (!paths.includes(path)) throw new Error(`Missing deployment input ${path}`);
+for (const path of ["api/index.ts", "server/index.ts", "src/lib/files/attachments.ts", "config/environments.json", "scripts/check-deployment-profile.mjs", "scripts/environment-profile.mjs", "package.json", "package-lock.json", "vercel.json"]) if (!paths.includes(path)) throw new Error(`Missing deployment input ${path}`);
 const destination = resolve(root, `artifacts/releases/uat-${Date.now()}`); await mkdir(destination, { recursive: true });
 const manifest = [];
 for (const path of paths) {

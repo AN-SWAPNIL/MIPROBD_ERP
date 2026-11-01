@@ -1,0 +1,38 @@
+{
+  "repository": "AN-SWAPNIL/Medical_Supplier_ERP",
+  "teamId": "team_XcSqmZo5GN5zap9crIA0zEil",
+  "profiles": {
+    "prototype": {
+      "branch": "prototype",
+      "mode": "mock",
+      "project": "medical-supplier-erp",
+      "projectId": "prj_80AVQnCabtMVzLYmZxsxfqcewOlB",
+      "origin": "https://medical-supplier-erp.vercel.app",
+      "supabaseRef": null
+    },
+    "staging": {
+      "branch": "dev",
+      "mode": "foundation",
+      "project": "mipro-erp-staging",
+      "projectId": "prj_Cavs9OBE5PhTgejQ4r4HFPCcqqFc",
+      "origin": "https://mipro-erp-staging.vercel.app",
+      "supabaseRef": "hyttuapvvqqxcyhojbwq",
+      "envFile": "artifacts/private/staging.env",
+      "runtimeFile": "artifacts/private/runtime-database.env",
+      "webPort": 5178,
+      "apiPort": 4178
+    },
+    "uat": {
+      "branch": "main",
+      "mode": "foundation",
+      "project": "mipro-erp",
+      "projectId": "prj_GYr1zeoy5t6uZyqPy3NgeC59sMQP",
+      "origin": "https://mipro-erp.vercel.app",
+      "supabaseRef": "njbecypawzsuqiteooly",
+      "envFile": "artifacts/private/uat.env",
+      "runtimeFile": "artifacts/private/uat-runtime.env",
+      "webPort": 5180,
+      "apiPort": 4180
+    }
+  }
+}

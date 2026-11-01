@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collections, customers, deliveries, invoices, orders, quotations, stockMovements } from "./data.js";
 import { buildSalesOrderWorkspace, restrictWorkspaceFinancials } from "./salesWorkspace.js";
 import { SalesOrderWorkspaceSchema } from "../src/domains/schemas.js";
 
 function records() {
-  return structuredClone({ order: orders.find((order) => order.id === "so-3")!, customer: customers.find((customer) => customer.id === "cus-kuwait")!, quotation: quotations.find((quote) => quote.id === "quo-3"), deliveries, invoices, collections, stockMovements });
+  const line = { id: "line-test", productId: "product-test", productCode: "TEST-001", productName: "Test product", quantity: "120", unitPrice: "710.00", discount: "0.00", lineTotal: "85200.00" };
+  const party = { customerId: "customer-test", customerName: "Test Hospital" };
+  const sale = { ...party, ownerId: "employee-test", date: "2026-01-02", lines: [line], total: "85200.00" };
+  const data: Parameters<typeof buildSalesOrderWorkspace>[0] = {
+    order: { ...sale, id: "so-3", orderNumber: "SO-TEST", quotationId: "quo-3", paymentConditions: "Credit", deliveryInstruction: "Test delivery", amountReceived: "60000.00", due: "25200.00", status: "Delivered" },
+    customer: { id: party.customerId, name: party.customerName, type: "Hospital", contactPerson: "Test contact", phone: "", address: "Test address", territory: "Test", paymentTerms: "Credit", creditLimit: "100000.00", currentDue: "25200.00", totalSales: "85200.00", totalCollected: "60000.00", active: true },
+    quotation: { ...sale, id: "quo-3", quotationNumber: "QUO-TEST", validityDays: 30, paymentTerms: "Credit", status: "Converted", subtotal: "85200.00", discountTotal: "0.00" },
+    deliveries: [{ ...party, id: "delivery-test", orderId: "so-3", challanNumber: "CH-TEST", date: sale.date, remarks: "Test fixture", status: "Delivered", lines: [{ ...line, batchId: "batch-test", batchNumber: "LOT-TEST" }] }],
+    invoices: [{ ...sale, id: "inv-2", invoiceNumber: "INV-TEST", orderId: "so-3", deliveryIds: ["delivery-test"], createdAt: "2026-01-02T00:00:00Z", subtotal: "85200.00", discountTotal: "0.00", status: "Approved" }],
+    collections: [{ ...party, id: "col-4", receiptNumber: "RCPT-TEST", orderId: "so-3", invoiceId: "inv-2", date: sale.date, amount: "60000.00", paymentMode: "Cash", ownerId: sale.ownerId, status: "Posted" }],
+    stockMovements: [{ id: "movement-test", date: sale.date, productId: line.productId, productName: line.productName, batchId: "batch-test", batchNumber: "LOT-TEST", type: "Dispatch", quantity: "120", reference: "CH-TEST", createdBy: sale.ownerId }]
+  };
+  return structuredClone(data);
 }
 
 test("workspace derives order-specific totals, linked documents and stock without counting customer-wide collections", () => {
@@ -55,7 +66,7 @@ test("partial quantities, draft coverage and cancelled invoices have separate li
   assert.equal(result.fulfilment[0].remainingToDeliverQty, "80.0000");
   assert.equal(result.stages.invoice, "Not Started");
   assert.equal(result.stages.collection, "Not Due");
-  const invoice = structuredClone(invoices.find((entry) => entry.id === "inv-2")!);
+  const invoice = records().invoices.find((entry) => entry.id === "inv-2")!;
   invoice.lines[0].quantity = "40";
   invoice.total = "28400.00";
   invoice.status = "Draft";

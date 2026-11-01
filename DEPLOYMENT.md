@@ -1,5 +1,9 @@
 # Staging Deployment
 
+## Current Branch Mapping
+
+The Git-linked targets are `prototype` -> `medical-supplier-erp`, `dev` -> `mipro-erp-staging`, and `main` -> `mipro-erp`. Each has independent Vercel runtime variables. Real credentials remain ignored locally; they are not tracked per branch. Preview builds are disabled and project-specific branch gates reject cross-deployments. See [BRANCHES_AND_ENVIRONMENTS.md](BRANCHES_AND_ENVIRONMENTS.md) for commands, database checks and explicit migration promotion. Older deployment IDs and non-Git-linked descriptions below are historical, not the current release process.
+
 ## Current Client UAT
 
 The new isolated client-review target is **https://mipro-erp.vercel.app** (Vercel `mipro-erp`, Supabase `njbecypawzsuqiteooly`). [MANUAL_SETUP.md](MANUAL_SETUP.md) is the current handover, manual checklist and deployment guide. No development business data were copied into UAT. This is not the earlier staging URL and is not certification of every remaining production requirement. Hosted validation results and exact source hashes are kept in ignored `artifacts/private/uat-*` metadata.

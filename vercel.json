@@ -5,10 +5,12 @@
   "installCommand": "npm ci",
   "outputDirectory": "dist",
   "regions": ["bom1"],
+  "git": { "deploymentEnabled": { "main": true, "dev": true, "*": false } },
   "functions": {
     "api/index.ts": {
       "maxDuration": 60,
-      "includeFiles": "server/assets/**"
+      "includeFiles": "server/assets/**",
+      "excludeFiles": "{files/**,artifacts/**,database/migrations/**,scripts/**,**/*.test.ts}"
     }
   },
   "headers": [

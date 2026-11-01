@@ -2,11 +2,15 @@
 
 Updated: 1 November 2026.
 
+## Branch-Based Environments
+
+See [BRANCHES_AND_ENVIRONMENTS.md](BRANCHES_AND_ENVIRONMENTS.md): `prototype` is mock-only, `dev` uses the development/staging Supabase, and `main` uses isolated client UAT. `npm run dev` selects the matching ignored private file; Git never switches or commits secret `.env` files. The real backend branches contain no mock API/seed modules. Git-linked project isolation replaces the older manual-only deployment arrangement described in historical sections below. Git pushes never apply database migrations automatically.
+
 ## New Isolated Client UAT
 
 The newly authorized client-review target is **https://mipro-erp.vercel.app**, Vercel project `mipro-erp`, connected only to Supabase `mipro-erp-uat` (`njbecypawzsuqiteooly`). Development/staging/demo data were not reset or copied. Read [MANUAL_SETUP.md](MANUAL_SETUP.md) for owner password/MFA, **new-project SMTP**, commercial hosting, real company configuration and exact deployment commands. This UAT deployment is not a full production-completion certificate; the engineering register still applies. New setup/runtime credentials are separate ignored files under `artifacts/private/uat*`.
 
-The earlier staging deployment and milestone instructions below remain historical and development-scoped. Do not run a bare Vercel deploy to update UAT; use the explicit UAT snapshot/deploy scripts. New backups are separated by project reference. Missing historical development evidence remains documented, not fabricated or silently deleted.
+The earlier milestone instructions below remain historical and development-scoped. Normal promotion is feature branch -> `dev` -> `main`; explicit UAT snapshot/deploy scripts remain a fallback. Never use a bare Vercel deploy: its local project link is not selected by the Git branch. Backups are separated by project reference. Missing historical development evidence remains documented, not fabricated or silently deleted.
 
 ## Super Admin Authority
 

@@ -2,6 +2,10 @@
 
 Updated: 1 November 2026.
 
+## Branch Selection
+
+The repository separates `prototype` (mock demo), `dev` (real staging) and `main` (client UAT). See [BRANCHES_AND_ENVIRONMENTS.md](BRANCHES_AND_ENVIRONMENTS.md). `npm run dev` selects an ignored private credential file from the branch, not the old root `.env`. Each Vercel project is configured for its matching Git branch only, with previews disabled. These controls do not complete the production engineering listed below.
+
 ## Current Target
 
 - Client UAT: **https://mipro-erp.vercel.app**. Vercel project: `mipro-erp`.
@@ -66,4 +70,4 @@ node scripts/prepare-uat-release.mjs
 node scripts/deploy-uat.mjs --apply
 ```
 
-Deployment scripts use the explicit `mipro-erp` project ID and private metadata. The root `.vercel` link remains the earlier staging target, so do not run a bare `vercel deploy`. The new site is not Git-linked yet. Pushing `dev` may still deploy the **old** public demo. No Git push was performed for UAT setup.
+Normal promotion is `dev` (staging) -> `main` (UAT), using separate Git-linked Vercel projects. Only `prototype` updates the old public demo. Explicit UAT snapshot commands remain a manual fallback. The root `.vercel` link remains the earlier staging target: never run a bare `vercel deploy`, which does not choose a project from the Git branch.
