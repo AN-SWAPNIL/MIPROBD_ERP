@@ -11,7 +11,8 @@ test("dashboard scopes require source access, with independent profit and wareho
   assert.equal(warehouse.sales, false); assert.equal(warehouse.accounts, false); assert.equal(warehouse.customers, false); assert.equal(warehouse.inventory, true);
   const importer = dashboardAccess(user("Import Officer")); assert.equal(importer.sales, false); assert.equal(importer.imports, true);
   const sales = dashboardAccess(user("Sales Executive")); assert.equal(sales.sales, true); assert.equal(sales.accounts, false); assert.equal(sales.profit, false);
-  assert.equal(dashboardAccess(user("Super Admin", [{ permission: "sales", action: "view", effect: "DENY" }])).profit, false);
+  assert.equal(dashboardAccess(user("Super Admin", [{ permission: "sales", action: "view", effect: "DENY" }])).profit, true);
+  assert.equal(dashboardAccess(user("Managing Director", [{ permission: "sales", action: "view", effect: "DENY" }])).profit, false);
 });
 test("dashboard validates bounded real business-date periods and rejects unknown scope arguments", () => {
   const today = businessDate(); const valid = { from: today.slice(0, 7) + "-01", to: today };

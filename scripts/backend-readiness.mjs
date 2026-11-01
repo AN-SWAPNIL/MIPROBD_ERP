@@ -1,11 +1,13 @@
 import { loadEnvFile } from "node:process";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { connectDatabase } from "../database/client.ts";
 import { sql } from "drizzle-orm";
 import { createClient } from "@supabase/supabase-js";
+import { databasePrivileges, isRestrictedRuntime } from "../server/foundation/database-security.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const exec = promisify(execFile);
@@ -22,12 +24,14 @@ function safeError(error) {
 }
 
 try {
-  loadEnvFile(new URL("../.env", import.meta.url));
+  loadEnvFile(new URL(`../${process.env.ERP_ENV_FILE || ".env"}`, import.meta.url));
 } catch {
   record("FAIL", "Local configuration", "Could not load .env");
   process.exit(1);
 }
 
+const privateRuntime = new URL(`../${process.env.ERP_RUNTIME_ENV_FILE ?? "artifacts/private/runtime-database.env"}`, import.meta.url);
+if (existsSync(privateRuntime)) loadEnvFile(privateRuntime);
 const required = ["DATABASE_URL", "DATABASE_MIGRATION_URL", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY", "VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY", "SUPER_ADMIN_NAME", "SUPER_ADMIN_EMAIL"];
 const missing = required.filter((key) => !process.env[key]?.trim());
 if (missing.length) {
@@ -36,7 +40,7 @@ if (missing.length) {
 }
 record("PASS", "Required variables", "All present; values withheld");
 
-const text = await readFile(new URL("../.env", import.meta.url), "utf8");
+const text = await readFile(new URL(`../${process.env.ERP_ENV_FILE || ".env"}`, import.meta.url), "utf8");
 record(/^\s*\*#/m.test(text) ? "WARN" : "PASS", "Comment syntax", "Use plain # comments, not Markdown");
 record(/password\s*:/i.test(text) ? "WARN" : "PASS", "Password comments", "Do not keep plaintext passwords in comments");
 record(process.env.VITE_API_BASE_URL ? "WARN" : "PASS", "API base", "Same-origin deployments use a blank API base");
@@ -97,7 +101,7 @@ try {
   const { data, error } = await client.storage.listBuckets();
   if (error) throw error;
   record("PASS", "Storage API", "Bucket listing accepted");
-  for (const [name, expectedPublic] of [["erp-documents", false], ["website-media", true]]) {
+  for (const [name, expectedPublic] of [["erp-documents", false], ["website-media", true], ["erp-opening-sources", false]]) {
     const bucket = data.find((entry) => entry.name === name);
     record(!bucket ? "WARN" : bucket.public === expectedPublic ? "PASS" : "FAIL", `Storage ${name}`, !bucket ? "Not created yet; foundation setup can create it" : bucket.public === expectedPublic ? "Visibility correct; this read-only check does not certify domain file authorization" : "Incorrect bucket visibility");
   }
@@ -105,7 +109,8 @@ try {
   record("FAIL", "Storage API", safeError(error));
 }
 
-for (const name of ["DATABASE_URL", "DATABASE_MIGRATION_URL"]) {
+const runtimeName = process.env.DATABASE_RUNTIME_URL ? "DATABASE_RUNTIME_URL" : "DATABASE_URL";
+for (const name of [runtimeName, "DATABASE_MIGRATION_URL"]) {
   let connection;
   try {
     const url = new URL(process.env[name]);
@@ -115,6 +120,16 @@ for (const name of ["DATABASE_URL", "DATABASE_MIGRATION_URL"]) {
       await tx.execute(sql`select 1 as connected`);
     }, { accessMode: "read only" });
     record("PASS", name, `TLS connection and read-only transaction succeeded on port ${url.port || "5432"}`);
+    if (name === runtimeName) record(isRestrictedRuntime(await databasePrivileges(connection)) ? "PASS" : "FAIL", "Runtime privileges", "Requires non-owner, no DDL/bypass-RLS/Auth/Storage access and RLS on every private table");
+    if (name === runtimeName) {
+      const ledger = await connection.client.query("select to_regclass('erp_private.ledger_configurations') as name");
+      if (!ledger.rows[0]?.name) record("FAIL", "General Ledger", "Apply the reviewed approval/ledger migrations before running the updated backend");
+      else {
+        const active = await connection.client.query("select count(*)::int count from erp_private.ledger_configurations where state='Approved'");
+        const strict = process.env.NODE_ENV === "production" || process.env.ERP_REQUIRE_LEDGER_CONFIGURATION === "true";
+        record(active.rows[0].count === 1 ? "PASS" : strict ? "FAIL" : "WARN", "General Ledger", active.rows[0].count === 1 ? "Approved mapping exists; independent opening/source reconciliation is still a separate acceptance gate" : "No approved company chart/cutover mapping; production operational posting will fail closed");
+      }
+    }
   } catch (error) {
     record("FAIL", name, safeError(error));
   } finally {

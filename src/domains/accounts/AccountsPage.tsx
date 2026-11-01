@@ -20,6 +20,7 @@ import { useToastStore } from "../../lib/ui/toast";
 import { formatMoney as formatCurrency } from "../../utils/precise";
 import SalesReferenceLink from "../sales/SalesReferenceLink";
 import { foundationMode, workspacePath } from "../../lib/runtime";
+import { canReadLedger,canReadPayroll } from "../ledger/access";
 
 type View = "expenses" | "accounts" | "transactions" | "dues" | "position";
 type Task = { run: () => Promise<unknown>; success: string };
@@ -140,6 +141,9 @@ export default function AccountsPage() {
         subtitle="Daily expenditure, TA/DA, collections, customer dues and simple cash/bank transactions. This is not a full accounting replacement."
         actions={
           <>
+            {foundationMode && canReadLedger(user) ? <Button icon={<Landmark className="h-4 w-4" />} onClick={() => navigate("/backend/accounts/ledger")}>General Ledger</Button> : null}
+            {foundationMode&&hasEffectivePermission(user,"accounts")?<Button icon={<Landmark className="h-4 w-4"/>} onClick={()=>navigate("/backend/supplier-claims")}>Supplier Claims</Button>:null}
+            {foundationMode&&canReadPayroll(user)?<Button icon={<WalletCards className="h-4 w-4"/>} onClick={()=>navigate("/backend/payroll")}>Payroll & Commission</Button>:null}
             {canViewReports ? <Button icon={<FileBarChart className="h-4 w-4" />} onClick={() => navigate(`/app/reports/${view === "expenses" ? "daily-expenditure" : view === "dues" ? "customer-dues" : view === "accounts" ? "cash-movement-summary" : view === "position" ? "balance-sheet" : "account-transactions"}`)}>Open Report</Button> : null}
             {view === "expenses" && canPost ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} disabled={action.isPending} onClick={() => setExpenseOpen(true)}>Post Expense</Button> : view === "transactions" && canPost ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} disabled={action.isPending} onClick={() => setTransactionOpen(true)}>Post Voucher</Button> : view === "position" && canPost ? <><Button icon={<Plus className="h-4 w-4" />} disabled={action.isPending} onClick={() => setSettlementOpen(true)}>Supplier Entry</Button>{canViewPosition ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} disabled={action.isPending} onClick={() => setPositionOpen(true)}>Position Entry</Button> : null}</> : view === "dues" && canPostCollection ? <Button icon={<Banknote className="h-4 w-4" />} onClick={() => navigate("/app/sales?view=collections")}>Post Collection</Button> : null}
           </>

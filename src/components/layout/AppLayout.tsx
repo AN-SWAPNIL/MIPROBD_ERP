@@ -2,6 +2,7 @@ import clsx from "clsx";
 import {
   Building2,
   ChevronDown,
+  ClipboardCheck,
   ChevronsLeft,
   ChevronsRight,
   LogOut,
@@ -19,6 +20,9 @@ import { useAuthStore, useEffectiveRole } from "../../lib/auth/session";
 import { navSections } from "../../lib/permissions/matrix";
 import { canAccessEmployeeHub, canAccessSettings, hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
 import { useAIContextStore } from "../../lib/ai/context";
+import { foundationMode, workspacePath } from "../../lib/runtime";
+import { controlDomains } from "../../domains/controls/contracts";
+import { canReadApprovalDomain } from "../../domains/controls/access";
 
 export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
@@ -30,10 +34,22 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const setAIRoute = useAIContextStore((state) => state.setRoute);
+  const home = foundationMode ? "/backend" : "/app/dashboard";
 
   useEffect(() => {
-    setAIRoute(location.pathname + location.search);
+    if (!foundationMode) setAIRoute(location.pathname + location.search);
   }, [location.pathname, location.search, setAIRoute]);
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") { setMobileOpen(false); setProfileOpen(false); } };
+    window.addEventListener("keydown", close);
+    if (mobileOpen) {
+      const before = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => { document.body.style.overflow = before; window.removeEventListener("keydown", close); };
+    }
+    return () => window.removeEventListener("keydown", close);
+  }, [mobileOpen]);
 
   useEffect(() => {
     document.title = "MIPRO ERP | Employee Operations";
@@ -51,7 +67,7 @@ export default function AppLayout() {
       .map((section) => ({
         ...section,
         items: section.items.filter((item) => {
-          if (item.path === "/app/settings") return canAccessSettings(session?.user);
+          if (item.path === "/app/settings") return foundationMode ? ["products", "suppliers", "settings", "accounts"].some((area) => hasEffectivePermission(session?.user, area as "products" | "suppliers" | "settings" | "accounts")) : canAccessSettings(session?.user);
           if (item.path === "/app/employees") return canAccessEmployeeHub(session?.user);
           if (item.path === "/app/sales") return hasEffectivePermission(session?.user, "sales") || hasEffectivePermission(session?.user, "marketing");
           return hasEffectivePermission(session?.user, item.permission);
@@ -72,7 +88,7 @@ export default function AppLayout() {
         <button
           className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-md bg-white shadow-sm ring-1 ring-slate-200"
           type="button"
-          onClick={() => navigate("/app/dashboard")}
+          onClick={() => { setMobileOpen(false); navigate(home); }}
           aria-label="Open dashboard"
         >
           <img className="h-7 w-auto max-w-none" src="/favicon.png" alt="" />
@@ -111,7 +127,8 @@ export default function AppLayout() {
                       )
                     }
                     key={item.path}
-                    to={item.path}
+                    to={item.path === "/app/dashboard" ? home : workspacePath(item.path)}
+                    end={item.path === "/app/dashboard"}
                     onClick={() => setMobileOpen(false)}
                     title={collapsed ? item.label : undefined}
                   >
@@ -140,7 +157,7 @@ export default function AppLayout() {
   );
 
   return (
-    <div className="min-h-screen bg-[#eaf1f7] text-slate-900">
+    <div className={clsx("min-h-screen bg-[#eaf1f7] text-slate-900", foundationMode && "backend-workspace")}>
       <Toasts />
       <div className="fixed inset-y-0 left-0 z-30 hidden lg:block">{side}</div>
       {mobileOpen ? (
@@ -153,7 +170,7 @@ export default function AppLayout() {
         </div>
       ) : null}
 
-      <div className={clsx("app-content-shell min-h-screen transition-[padding]", collapsed ? "lg:pl-[72px]" : "lg:pl-[248px]")}>
+      <div className={clsx("app-content-shell min-h-screen transition-[padding]", foundationMode && "backend-content-shell", collapsed ? "lg:pl-[72px]" : "lg:pl-[248px]")}>
         <header className="app-header sticky top-0 z-20 border-b border-blue-200 border-t-2 border-t-red-600 bg-[#f8fbff]/95 backdrop-blur">
           <div className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-5">
             <button className="rounded-md p-2 text-slate-600 hover:bg-slate-100 lg:hidden" type="button" onClick={() => { setCollapsed(false); setMobileOpen(true); }} aria-label="Open navigation">
@@ -164,12 +181,15 @@ export default function AppLayout() {
               <span className="min-w-0 leading-tight"><strong className="block truncate text-xs text-slate-800">MIPRO HealthCare Corporation</strong><small className="block truncate text-[10px] text-slate-500">Operational ERP | Main Warehouse</small></span>
             </div>
             <span className="ml-auto hidden rounded-md bg-slate-100 px-2.5 py-1.5 text-xs font-bold text-slate-700 sm:inline-flex md:ml-0">{role}</span>
+            {foundationMode && controlDomains.some((domain) => canReadApprovalDomain(session?.user, domain)) ? <Button className="ml-auto md:ml-0" variant="ghost" icon={<ClipboardCheck className="h-4 w-4" />} onClick={() => navigate("/backend/approvals")} aria-label="Approvals" title="Approvals" /> : null}
             <div className="relative">
               <button
                 className="flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-1.5 pr-2 text-left hover:bg-slate-50"
                 type="button"
                 onClick={() => setProfileOpen((value) => !value)}
                 aria-expanded={profileOpen}
+                aria-label="Account menu"
+                title="Account menu"
               >
                 <Avatar className="h-7 w-7 rounded object-cover" src={session?.user.avatarUrl} name={session?.user.name ?? "User"} />
                 <span className="hidden min-w-0 leading-tight xl:block">
@@ -181,7 +201,7 @@ export default function AppLayout() {
               {profileOpen ? (
                 <div className="absolute right-0 mt-2 w-56 rounded-md border border-slate-200 bg-white p-1.5 shadow-xl">
                   <div className="border-b border-slate-100 px-2 py-2 text-xs text-slate-500">Signed in as <strong className="block truncate text-slate-900">{session?.user.email}</strong></div>
-                  <button className="mt-1 flex w-full items-center gap-2 rounded px-2 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" type="button" onClick={() => { setProfileOpen(false); navigate("/app/profile"); }}>
+                  <button className="mt-1 flex w-full items-center gap-2 rounded px-2 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" type="button" onClick={() => { setProfileOpen(false); navigate(workspacePath("/app/profile")); }}>
                     <UserRound className="h-4 w-4" /> Profile & settings
                   </button>
                   <button className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm font-semibold text-red-700 hover:bg-red-50" type="button" onClick={signOut}>
@@ -197,7 +217,7 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
-      <FloatingAIAssistant />
+      {!foundationMode ? <FloatingAIAssistant /> : null}
     </div>
   );
 }

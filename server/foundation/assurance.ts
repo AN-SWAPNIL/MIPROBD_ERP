@@ -3,7 +3,7 @@ import type { Session, User } from "../../src/types/index.js";
 import { hasCapability } from "../../src/lib/permissions/effectiveAccess.js";
 
 export function privilegedIdentity(user: User) {
-  return ["Super Admin", "Managing Director", "Accounts"].includes(user.role) || hasCapability(user, "manage_user_access");
+  return ["Super Admin", "Managing Director", "Accounts"].includes(user.role) || (["manage_user_access", "manage_ledger", "approve_ledger", "view_payroll", "manage_payroll", "approve_payroll", "approve_stock_control"] as const).some((capability) => hasCapability(user, capability));
 }
 // Call only after the provider has validated this exact token with getUser/refresh/verify.
 export function sessionSecurity(user: User, authUser: Pick<AuthUser, "factors">, verifiedToken: string, requirePrivileged: boolean): NonNullable<Session["security"]> {

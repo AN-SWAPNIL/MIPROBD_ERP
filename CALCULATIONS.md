@@ -2,6 +2,15 @@
 
 The persistent backend uses `decimal.js` for import costing, receipt/dispatch valuation, sales, invoices, collections and operating finance. SQL reports use PostgreSQL `numeric`. API amounts are decimal strings; BDT monetary totals round half-up to two decimals.
 
+Inspection attachments do **not** change quantity, landed cost, credit, loss or payroll. SHA-256 identifies the validated original file bytes; a second SHA-256 over the database's canonical evidence JSON binds the exact included files/withdrawals to the source approval. It is an integrity checksum, not a monetary formula or electronic signature. Photos remain optional; an empty evidence manifest is valid.
+
+## Mid-Month Compensation
+
+- Each approved effective compensation profile covers its actual dates within the month, clipped to approved joining/end dates. Every participating profile is retained; the latest rate is not applied to the whole month.
+- A preparer enters an evidenced earned factor and overtime hours for **each** period. Factor totals must match the employee total and cannot exceed 1; hours must also reconcile. Calendar-day attendance/proration is not guessed.
+- Per period: `earned component = round(monthly component * earned factor, 2)` and `overtime = round(approved hourly rate * approved hours, 2)`. Sum these saved period amounts, then apply the existing bonus, commission, recovery and deduction formulas once. This intentionally rounds each independently evidenced period before summing.
+- Review, payslip, accrued salary liability and actual payments use the same saved breakdown. A newly activated policy invalidates an unposted stale review; it cannot rewrite an already accrued month. Post-accrual corrections remain a separate unfinished workflow.
+
 ## Import And Landed Cost
 
 ```text
@@ -31,13 +40,26 @@ Customs duty is not calculated by the ERP. The user enters the final assessed am
 
 ## Inventory And FIFO
 
+### Opening Review Preview (Update 13)
+
+`Opening cost value = round(quantity * explicitly approved BDT unit cost, 2)` using decimal strings, 48-digit intermediate precision and half-up rounding. Unit cost accepts up to 10 decimals; it is not the product's selling price. Missing cost, invalid dates, duplicate positions, missing exact ERP mappings or unresolved source exceptions block approval. Preview sums stock cost separately from customer/supplier balances and cash. Preview alone posts nothing; approval (Super Admin may self-approve) and explicit Super Admin posting create the linked journals atomically.
+
+Opening AR is the approved **remaining** invoice due, not a new sale. Original invoice/due dates are retained; collections allocate oldest original invoices first. Supplier payable is `obligations - actual payments - historical opening advances`; a negative balance is an advance. Historical advances do not create another cash payment. Cash openings require an account without existing journals. Reconciliation compares original postings with approved source lines, not the later changing balances. These subledgers are not a balanced general ledger.
+
+Source control differences are `reported sales - reported paid - reported due`. The XLSX reader preserves formulas and their saved cached results; it does not recalculate Excel formulas or assume a blank means zero. The actual file hash/cells are authoritative evidence, not figures copied from an earlier analysis. Detailed source profiles stay private under `artifacts/opening/`.
+
+### Posted Inventory
+
 ```text
-Available batch quantity = Received quantity - Dispatched quantity
+Physical batch quantity = sum(saved signed quantity deltas)
+Physical batch value = sum(saved signed value deltas)
+Receive / Opening / Return: positive; Dispatch: negative; Adjustment: explicit +1 / -1
+Dispatch eligibility = Saleable condition + recognized by dispatch date + not expired
 Delivery COGS = round(batch received value * cumulative dispatched quantity / batch received quantity, 2)
                 - previously posted COGS for that batch
 ```
 
-Automatic dispatch uses the oldest eligible non-expired matching batch first. If one batch is insufficient, it continues into the next oldest batch. A newer-batch override requires authority and an audited reason. Transactional dispatch now persists these quantities and exact COGS together. It never multiplies a rounded display unit cost: BDT 100 over three units dispatches as 33.33, 33.34 and 33.33. Product/batch locks prevent two API workers from overselling.
+Automatic dispatch uses the oldest eligible non-expired matching batch first. Original receipt date orders FIFO; an opening batch is recognized only on its opening count date, so an older receipt date cannot make it dispatchable before cutover. If one batch is insufficient, allocation continues into the next oldest. A newer-batch override requires authority and an audited reason. Transactional dispatch persists quantity and exact COGS together. It never multiplies a rounded display unit cost: BDT 100 over three units dispatches as 33.33, 33.34 and 33.33. Product/batch locks prevent two API workers from overselling.
 
 ## Sales, Invoice And Due
 
@@ -87,7 +109,7 @@ Supplier advance = max(0, -net balance)
 
 TA/DA totals are derived by the server, ignoring a submitted total. Employee/category names are captured from their masters at posting, and Entered By comes from the authenticated user. General expenses use their entered positive amount. Expense posting creates an equal cash/bank outflow atomically; reversal creates an equal inflow. Neither changes import landed cost.
 
-Supplier obligations record debt but move no cash. Payments create equal account outflows; reversing a payment restores cash. Payments exceeding obligations remain a supplier advance, not a negative payable hidden from the user. Financial-position entries are verified opening/adjustment sources only and do not change cash automatically.
+Supplier obligations record debt but move no cash. Payments create equal account outflows; reversing a payment restores cash. Approved historical opening advances reduce the supplier balance without a second cash outflow. Payments plus opening advances exceeding obligations remain a supplier advance, not a hidden negative payable. Financial-position entries are verified opening/adjustment sources only and do not change cash automatically.
 
 Account balances sum immutable inflows minus outflows, including compensating reversals; they are not editable totals. Concurrent expense/payment requests lock the same account, so they cannot spend the same balance twice. Current cash entries must be chronological; historical/backdated posting and opening reconciliation remain launch items.
 
@@ -119,7 +141,7 @@ Product-family reports group canonical products by their master-data category. S
 - An invoice dated yesterday remains yesterday's sale after cancellation today. Today shows its negative reversal. Receipt, expense and supplier reversals follow the same business-date rule. Current workspace totals above describe current status; historical reports use dated events.
 - Customer opening due is `sum(debit - credit)` before From; closing due includes all entries through To. Running statements carry earlier amounts into an explicit opening row. Mixed-order receipts count each actual allocation once.
 - Cash opening/closing use `sum(inflow - outflow)` before From/through To. Period flows exclude earlier entries. Non-operating advances and loans are not sales or operating expenses.
-- Physical stock/value at To are received quantity/value less dispatched quantity/value through To. Invoice cancellation does not restore stock. Received value and COGS use saved rounded postings, not display unit price multiplication.
+- Physical stock/value at To are the sums of signed immutable quantity/value deltas through To: receiving/opening/evidenced surplus positive, dispatch/count shortage/write-off negative. Invoice cancellation does not restore stock. Saved postings, not rounded display unit costs, determine book value and COGS.
 - Expiry attention uses the report end date: expired, then 31/92/183-day bands, matching the existing Inventory screen's approximate one/three/six-month alerts. Expired stock remains physically on hand but cannot be dispatched.
 - Sales Summary groups by calendar day, Monday-start week, month or year. Distinct customers are counted within the whole group, not added from daily counts. Gross Profit by Product uses invoiced saved delivery cost and reverses that margin on cancellation.
 - Master names/assignments/status are current. Import registers use current commercial records filtered by PO date; finalized-cost reports use the current immutable snapshot's finalization date. These are not reconstructed historical master/commercial records.
@@ -155,8 +177,65 @@ Product-family reports group canonical products by their master-data category. S
 
 Warehouse settings and cost presets calculate no balances or prices. A preset never chooses an allocation method automatically. Client-decision confirmation records an agreement, not an automatic financial posting or permission grant.
 
+## General Ledger (Update 13)
+
+- Amounts use decimal strings and 48-digit decimal arithmetic. Journal lines are saved to two decimal places. Each line has one positive debit or credit; the saved debit total must equal the credit total exactly. Drafts never affect balances.
+- Saved warehouse receipts: **Dr Inventory / Cr Inventory Clearing**. Actual dispatch cost: **Dr COGS / Cr Inventory**. Revenue is separate: approved invoices post **Dr Receivables / Cr Sales**.
+- Posted collections: **Dr selected Cash/Bank / Cr Receivables**. Operating expenses: **Dr Operating Expense / Cr selected Cash/Bank**. Supplier obligations: **Dr Inventory Clearing / Cr Payables**; supplier payments: **Dr Payables / Cr selected Cash/Bank**. Direct import-cost payments use Inventory Clearing, not Operating Expense.
+- Cash-source and invoice reversals swap the original journal's debit/credit and account IDs, once. They do not use today's mapping or delete the original. A historical invoice cancellation without an original GL journal uses the explicitly mapped Sales Returns contra-income account and Receivables.
+- Trial balance: `opening = sum(debit - credit) before From`; `period debit/credit = their separate sums within From..To`; `closing = opening + period debit - period credit`. Positive net is debit; negative net is credit. Running account statements apply the same signed arithmetic per chart account.
+- Ledger income statement uses only posted Income/Expense accounts within From..To. Income = income-account credits minus debits; expense = expense-account debits minus credits; `profit/loss = income - expense`. Payroll accrual contributes expense, but salary payment, loan issue and recovery do not expense it again. This differs from invoiced gross margin and is not certified statutory accounts.
+- Control reconciliation compares as-of stock value, customer net receivables, supplier obligations minus payments/advances, and cash inflows minus outflows with their approved GL mappings. Confidential payroll users additionally see unpaid net salary and outstanding employee advances/loans. `difference = operational source - ledger control`. "Not configured" is not a successful reconciliation. A balanced trial balance is not proof of complete company openings or a verified Balance Sheet.
+- There are no invented opening equity, salary or commission amounts. Approved stock count/write-off, customer return and payroll sources use the calculations below. Unsupported/ambiguous sources cannot guess an account after cutover. Supplier claims/replacements are described below; formal posted-source reversal remains unfinished.
+
+## Partial Stock Holds (Update 13)
+
+- `outstanding hold = initially held quantity - posted releases - approved posted write-offs`. Pending, rejected or merely approved documents do not free units. Write-offs dispose of stock; they do not release it for sale. Quantities retain four-decimal precision.
+- `eligible units = physical on hand - outstanding holds`, only for Saleable, recognized, unexpired batches. Otherwise eligible is zero. FIFO uses those eligible units but preserves original received-date order. Actual dispatch cannot be backdated before the latest hold/release control.
+- A hold's review amount is `saved current batch value * held quantity / physical on-hand quantity`, rounded to two decimals. A release's approval-review amount is `saved hold review amount * release quantity / original held quantity`, rounded independently to two decimals. These amounts check authority thresholds only; they are not cost allocations, loss postings or additive accounting totals.
+- Holds/releases leave physical quantity, saved stock value and GL unchanged. Actual delivery still posts its cumulative share of the original saved batch total. For example, 10 units valued at BDT 10.10, with 4 held and 2 released, has 8 eligible units; dispatching 7 leaves 3 physical, 2 held, 1 eligible and BDT 3.03 book value.
+- As-of reports include holds/releases/disposals dated through To alongside signed stock journals. A separate approved whole-batch release adds a condition-history event without changing original source evidence or expiry. Return accounting is not implemented by reservations.
+
+## Stock Counts And Write-offs (Update 13)
+
+- `variance quantity = physically counted quantity - saved current book quantity`. A count covers its explicitly selected batches, not an assumed complete warehouse. Fingerprints block posting after any later stock/hold/condition change; a reviewed new snapshot is required.
+- Shortage/write-off cost = `round(original saved value * (previously consumed quantity + removed quantity) / original quantity, 2) - previously consumed saved value`. Thus BDT 10.01 over three units consumes 3.34, 3.33 and 3.34, exactly 10.01.
+- Surplus value = `surplus quantity * explicitly evidenced unit cost`, rounded once to two decimals. Missing cost/condition blocks approval submission. Surplus creates a separate count-source batch; original receipt quantities, price and landed cost do not change.
+- Approval exposure is the sum of absolute line variance values, not net gain minus loss. Whole-condition release uses the inspected stock's book value for authority review but has zero financial effect. All source preparers across revisions are excluded from decisions.
+- Posted loss/write-off: **Dr Stock Loss / Cr Inventory**. Posted surplus: **Dr Inventory / Cr Stock Gain**. These share one transaction with stock/approval/GL, use reviewed mappings, and create no customer due, supplier payment or cash movement. Zero variance creates no quantity/GL journal. Observation date is retained; stock/value change on posting date.
+
+## Customer Returns And Credit (Update 13)
+
+- Returnable quantity = original delivered quantity minus all previously posted returns/refusals for that line. Returned cost = `round(original saved delivery cost * cumulative returned quantity / delivered quantity, 2) - previously returned saved cost`. Original LOT/expiry stays unchanged; a separate inspected return-source batch receives this exact saved total.
+- Credit/discount use the same cumulative method against the original invoice's saved net total/discount and its invoiced quantity, not today's price or selling-price markup. For an uninvoiced refusal, financial credit is zero; its saved operational value/discount/cost instead reduce the later accepted-only invoice. Fully refused goods need no invoice/collection and are excluded from missing-invoice exceptions; gross challan quantities remain operational delivery facts. BDT 10.01 across three units restores 3.34, 3.33, 3.34 exactly.
+- At posting, `applied to original due = min(return credit, max(original invoice due, 0))`. `unapplied credit = return credit - original due application - posted refunds/applications`. Pending approvals spend nothing. `refundable = min(unapplied credit, max(-current customer due, 0))`; a refund cannot exceed actual net customer credit or the selected account's funds.
+- A credit application debits the original credit invoice and credits a different same-customer invoice or approved opening receivable by the identical amount: total customer due, cash, revenue and GL control balances do not change. Opening remaining due is `original approved due - unreversed allocated collections - posted credit applications`; later collection skips an already settled opening. The original opening journal is never edited. Refund posts **Dr Receivables / Cr selected Cash/Bank** and consumes credit; it is not a deleted/relabelled collection.
+- Returned stock posts **Dr Inventory / Cr COGS**. Invoiced credit posts **Dr Sales Returns / Cr Receivables**. Approval exposure is credit plus restored cost, not a netted amount. All related stock/credit/approval/GL changes share one transaction. Net sales and collection reports include dated credits/refunds; original import landed-cost snapshots never change. Damage impairment/write-off remains its separate approved source.
+
+## Payroll And Commission (Update 13)
+
+- Each fixed wage component is `round(approved component * explicitly approved earned factor, 2)`. Fixed gross is the sum of basic, house rent, medical, transport and other fixed allowance, counted once. Overtime is `round(approved hourly rate * approved hours, 2)`; bonus and other deductions require evidence. No GPS/visit score determines attendance or wages, and no statutory rate or tax is guessed.
+- Cumulative commission entitlement is the sum of `round(saved net basis in each effective policy interval * approved rate / 100, 2)`. Basis is explicitly Net Invoiced Sales or Net Collections. Invoices, returns, cancellations, allocated receipts, reversals and refunds retain their real business dates. `commission delta = entitlement through the salary month - commission already accrued in earlier runs`; cash payment timing cannot earn commission twice.
+- Positive delta is added. Negative delta is deducted only under approved recovery authority and only up to available earned salary after other deductions; the remaining signed difference stays as commission carry. Net salary cannot be negative. Stopping future commission uses an approved zero-rate policy, preserving historical entitlement.
+- `earned gross = fixed gross + bonus + overtime + applied signed commission`. `deductions = original advance recovery + original loan installment + other approved deduction`. `net salary = earned gross - deductions`. Example: 130 fixed + 10 bonus + 7.50 OT + 25 commission - 10 advance - 5 loan - 2 other = **155.50 net**. All arithmetic uses decimal strings/48-digit intermediates and half-up poisha rounding.
+- Accrual: **Dr Payroll Expense (earned gross) / Cr Payroll Payable (net) / Cr Employee Advances / Cr Employee Loans / Cr Payroll Deductions**, as applicable. Financing disbursement: **Dr Employee Advances or Employee Loans / Cr selected Cash/Bank**. Actual salary payment: **Dr Payroll Payable / Cr selected Cash/Bank**. Recovery reduces the original employee receivable, not a second cash receipt. Paid plus unpaid must equal accrued net; separate approved partial payments cannot exceed unpaid net or available funds.
+- A recovery cannot exceed original outstanding financing or a nonzero agreed installment, enforced by both API and database. Zero installment sets no automatic schedule: recovery still requires an explicitly prepared, evidenced and independently approved payroll amount. Financing terms cannot be silently edited after posting.
+- Payroll runs retain approved profiles, employee name/ID/designation/department/status and source calculations. All preparers and beneficiaries are excluded from verification/final approval. Only completed salary months accrue; duplicate/backdated regular payroll is blocked. Source changes require a linked reviewed revision. Explicit mid-month splits are described below; posted payroll corrections/reversals and automatic statutory calculations are not implemented and cannot be bypassed with guessed values.
+
+## Supplier Rejections And Replacements (Update 13)
+
+- Receipt rejection is never stock. Once every imported item unit is inspected, `rejected cost pool = finalized item cost - actual accepted receipt values`. The pool is split across rejected receipt lines by rejected quantity; largest fractional poisha wins, with receipt-line ID as the stable tie-breaker. This prevents charging a rejected unit a poisha already capitalized into accepted stock.
+- PostgreSQL uses exact integer-poisha/quanta quotient and remainder, not an intermediate decimal division followed by another rounding. This agrees with the API's Decimal result on both sides of a half-poisha, even at maximum supported quantity precision.
+- Each partial claim uses `round(source value * (previously consumed quantity + new quantity) / original source quantity, 2) - previously consumed value`. Held-stock claims use the original batch totals and all earlier consumption, not the displayed rounded unit price. Held units leave physical stock only when the independently approved disposition posts.
+- Supplier credit is the explicit negotiated amount, not an assumed refund of landed cost. Credit posts **Dr Payables / Cr Inventory (held stock) or Inventory Clearing (receipt rejection)**. Cost above credit is Stock Loss; credit above cost is Stock Gain. No cash payment is created. Supplier due is `obligations - actual payments - historical advances - supplier credits`.
+- Replacement resolution transfers saved cost into **Dr Supplier Claims / Cr Inventory or Inventory Clearing**. Each separately approved accepted replacement creates a new LOT/batch at its cumulative share of that claim value: **Dr Inventory / Cr Supplier Claims**. Outstanding quantity/value equals the original promise less posted accepted receipts. Rejected replacement observations do not consume the promise. Additional receiving costs must be explicitly confirmed zero; they are never silently dropped or guessed.
+- Receipt preparation now follows **Draft > Submit > Verify > Approve > Post**. Draft/submitted quantities, saved values and optional inspection attachments are review information, not stock, cash or consumed replacement entitlement. Submission seals the exact files and source; only posted accepted units enter the formula above. A fully rejected inspection creates no batch or cost journal. This changes review controls, not the costing formula.
+- Write-off posts **Dr Stock Loss / Cr Inventory or Inventory Clearing**. Original import/receipt/landed-cost evidence stays unchanged. Zero-value stock/claims retain their quantities without fabricating a nonzero journal. Replays do not repeat quantities, supplier credits or GL entries.
+
 ## Print Calibration
 
 The print sheet is fixed at `210 x 297 mm` (A4), with zero CSS page margin. Digital letterhead artwork uses `1.5 mm` bleed on each edge, and the content safe area is shifted left by `1.5 mm` (`24 mm` to `22.5 mm`). Browser printing must use A4, no margins, 100% scale, background graphics enabled, and browser headers/footers disabled.
 
 Persistent transaction previews display saved monetary totals to two decimals and quantities to four (trailing quantity zeroes omitted). Order subtotal is `sum(saved line total + saved line discount)`; discount is `sum(saved line discount)`. Printing never recalculates the posted amount from a rounded unit cost. Report page edges remain 1.5 mm left/0.2 mm right, with an additional internal 27 mm left branding-safe zone. Printer-driver margins cannot be overridden by these CSS calculations.
+
+Screen previews fit the available width using `min(1, preview content width / A4 width at 96 dpi)`. Print media resets this preview-only zoom to 1; physical A4 dimensions and stationery offsets do not change.

@@ -6,8 +6,8 @@ import { canAssignRole, canGrantCapability, canGrantPermission, canManageEmploye
 import { accessSchema, inviteSchema, profileSchema } from "./contracts.js";
 import { audit, identity, rateLimit, toUser, type Context } from "./context.js";
 import { assertAllowed, HttpError } from "./errors.js";
-import { deliverInvitation } from "./invitations.js";
 import { lockActor } from "../operations/common.js";
+import { processInvitation, queueInvitation } from "./invitation-outbox.js";
 
 export function createEmployeeRouter(ctx: Context) {
   const router = Router();
@@ -49,33 +49,28 @@ export function createEmployeeRouter(ctx: Context) {
     const input = inviteSchema.parse(req.body);
     const actor = identity(res);
     // Reserve the employee first. A failed mail send leaves a resumable Pending record, not an orphan privileged identity.
-    const row = await ctx.db.transaction(async (tx) => {
+    const reserved = await ctx.db.transaction(async (tx) => {
       const [current] = await tx.select().from(employees).where(eq(employees.id, actor.user.id)).for("update");
       assertAllowed(current && canManageEmployees(toUser(current), "create") && canAssignRole(toUser(current), input.role));
       const [existing] = await tx.select().from(employees).where(eq(employees.email, input.email)).for("update");
       if (existing) throw new HttpError(409, "This employee already exists. Use its invitation retry action.");
       const [row] = await tx.insert(employees).values({ ...input, id: `emp-${randomUUID()}`, status: "Pending" }).returning();
       await audit(tx, current.id, "Employee invitation reserved", "Employee", row.id, { role: row.role });
-      return row;
+      const jobId = await queueInvitation(tx, row.id, current.id);
+      return { row, jobId };
     });
-    const sent = await sendInvitation(row.id, actor);
-    res.status(sent ? 201 : 202).json({ success: true, data: { id: row.id, invitationSent: sent }, message: sent ? "Employee invited" : "Employee saved as Pending; invitation delivery needs retry/configuration." });
+    const result = await processInvitation(ctx, reserved.jobId);
+    const sent = result?.invitationSent ?? false;
+    res.status(sent ? 201 : 202).json({ success: true, data: { id: reserved.row.id, invitationSent: sent, jobId: reserved.jobId }, message: sent ? "Invitation accepted by mail provider" : "Employee saved; invitation queued for retry or review." });
   });
 
-  async function sendInvitation(employeeId: string, actor: ReturnType<typeof identity>) {
+  async function reserveRetry(employeeId: string, actor: ReturnType<typeof identity>) {
     return ctx.db.transaction(async (tx) => {
       const current = await lockActor(tx, actor, "users", "create");
-      const [row] = await tx.select().from(employees).where(eq(employees.id, employeeId)).for("update");
+      const [row] = await tx.select().from(employees).where(eq(employees.id, employeeId));
       if (!row || row.status !== "Pending") throw new HttpError(409, "Only Pending employees can be invited.");
       assertAllowed(canManageEmployees(current, "create") && canAssignRole(current, row.role));
-      const delivery = await deliverInvitation(ctx, row);
-      if (!delivery.sent || !delivery.authUserId) {
-        await audit(tx, null, "Invitation delivery failed", "Employee", row.id);
-        return false;
-      }
-      await tx.update(employees).set({ authUserId: delivery.authUserId, updatedAt: new Date() }).where(eq(employees.id, row.id));
-      await audit(tx, null, "Invitation sent", "Employee", row.id);
-      return true;
+      return queueInvitation(tx, row.id, current.id);
     });
   }
 
@@ -83,8 +78,9 @@ export function createEmployeeRouter(ctx: Context) {
     const [row] = await ctx.db.select().from(employees).where(eq(employees.id, String(req.params.id)));
     assertAllowed(row && canManageEmployees(identity(res).user, "create") && canAssignRole(identity(res).user, row.role));
     await rateLimit(ctx, `invite-retry:${row.id}`, 5, 3600);
-    const sent = await sendInvitation(row.id, identity(res));
-    res.status(sent ? 200 : 202).json({ success: true, data: { id: row.id, invitationSent: sent }, message: sent ? "Invitation sent" : "Invitation delivery failed; Pending employee preserved." });
+    const jobId = await reserveRetry(row.id, identity(res));
+    const result = await processInvitation(ctx, jobId); const sent = result?.invitationSent ?? false;
+    res.status(sent ? 200 : 202).json({ success: true, data: { id: row.id, invitationSent: sent, jobId }, message: sent ? "Invitation accepted by mail provider" : "Invitation queued for retry or review; Pending employee preserved." });
   });
 
   router.patch("/employees/:id/access", async (req, res) => {

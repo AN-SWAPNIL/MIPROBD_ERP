@@ -115,7 +115,8 @@ test("hosted imports: persisted costing, role boundaries, immutable snapshots an
     record = ImportCaseSchema.parse(await expect(`/imports/${id}/finalize`, admin, {}, 200, "POST", `refinal-${suffix}`));
     assert.equal(record.snapshot!.version, 2); assert.equal(record.snapshotHistory!.length, 2);
     for (const table of ["landed_cost_snapshots", "warehouse_receipts", "receipt_lines", "stock_movements", "posting_keys"]) {
-      await assert.rejects(ctx.db.execute(sql`delete from erp_private.${sql.identifier(table)} where false`), (error: unknown) => (error as { cause?: { code: string } }).cause?.code === "55000");
+      // Restricted runtimes deny DELETE before a table-owner's append-only trigger would run.
+      await assert.rejects(ctx.db.execute(sql`delete from erp_private.${sql.identifier(table)} where false`), (error: unknown) => ["55000", "42501"].includes((error as { cause?: { code: string } }).cause?.code ?? ""));
     }
     console.log("Hosted imports: document sensitivity and private Storage");
     const upload = await expect("/uploads", officer, { purpose: "import-document", importId: id, documentType: "PI", sensitive: false, fileName: "test-pi.pdf", mimeType: "application/pdf", sizeBytes: 14 }, 201);

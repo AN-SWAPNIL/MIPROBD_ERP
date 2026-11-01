@@ -8,6 +8,8 @@ import { canManageTargetUser, hasCapability, hasEffectivePermission } from "../.
 import { uploadSchema } from "./contracts.js";
 import { audit, identity, toUser, type Context } from "./context.js";
 import { assertAllowed, HttpError } from "./errors.js";
+import { sourceForResource,qualityRead,qualityWrite } from "../quality/service.js";
+import { inspectBusinessFile } from "./attachment-files.js";
 
 export function matchesFileSignature(mime: string, bytes: Uint8Array) {
   const starts = (...values: number[]) => values.every((value, i) => bytes[i] === value);
@@ -25,7 +27,8 @@ export function createDocumentRouter(ctx: Context) {
     if (!employee) throw new HttpError(404, "Employee not found.");
     assertAllowed(actor.id === employee.id || canManageTargetUser(actor, toUser(employee)));
   }
-  async function requireDocumentAccess(actor: ReturnType<typeof identity>["user"], row: Pick<typeof documents.$inferSelect, "employeeId" | "importId" | "sensitive" | "purpose" | "expenseId" | "uploadedBy"> & { activityId?: string|null;visitId?:string|null;visitAttemptId?:string|null }, write = false) {
+  async function requireDocumentAccess(actor: ReturnType<typeof identity>["user"], row: Pick<typeof documents.$inferSelect, "employeeId" | "importId" | "sensitive" | "purpose" | "expenseId" | "uploadedBy"> & { activityId?: string|null;visitId?:string|null;visitAttemptId?:string|null;qualityResourceId?:string|null }, write = false) {
+    if(row.purpose==="quality-evidence"){if(!row.qualityResourceId)throw new HttpError(404,"Inspection source not found.");await ctx.db.transaction(async tx=>{const s=await sourceForResource(tx,row.qualityResourceId!);if(write)qualityWrite(actor,s);else qualityRead(actor,s);assertAllowed(!row.sensitive||hasCapability(actor,"view_sensitive_cost"));});return;}
     if(row.purpose==="field-visit-evidence"){
       assertAllowed(hasEffectivePermission(actor,"marketing")&&(!write||hasEffectivePermission(actor,"marketing","create")));
       if(row.visitId){const [v]=await ctx.db.select().from(fieldVisits).where(eq(fieldVisits.id,row.visitId));if(!v)throw new HttpError(404,"Visit not found.");await assertEmployeeScope(ctx.db,actor,v.employeeId);if(write)throw new HttpError(423,"Saved visit photos cannot be replaced.");return;}
@@ -81,6 +84,7 @@ export function createDocumentRouter(ctx: Context) {
     const actor = identity(res).user;
     const [row] = await ctx.db.select().from(documents).where(eq(documents.id, String(req.params.id)));
     if (!row) throw new HttpError(404, "Upload not found.");
+    if(row.purpose==="quality-evidence")throw new HttpError(409,"Complete inspection evidence through its source-bound endpoint.");
     await requireDocumentAccess(actor, row, true);
     assertAllowed(actor.id === row.uploadedBy, "Only the authorized uploader can complete this upload.");
     if (row.status === "Attached") return res.json({ success: true, data: { id: row.id }, message: "Upload already attached" });
@@ -89,13 +93,14 @@ export function createDocumentRouter(ctx: Context) {
     const bucket = ctx.admin.storage.from(row.bucket);
     const { data: file, error } = await bucket.download(row.objectPath);
     if (error || !file) throw new HttpError(409, "The authorized file has not been uploaded.");
-    if (file.size !== row.sizeBytes || file.type.split(";")[0] !== row.mimeType || !matchesFileSignature(row.mimeType, new Uint8Array(await file.slice(0, 16).arrayBuffer()))) {
+    if (file.size !== row.sizeBytes || file.type.split(";")[0] !== row.mimeType) {
       throw new HttpError(422, "Uploaded file size, type or signature does not match the authorization.");
     }
-    const imageInfo=row.purpose==="field-visit-evidence"?await validateVisitImage(Buffer.from(await file.arrayBuffer()),row.mimeType):undefined;
+    const bytes=Buffer.from(await file.arrayBuffer()),{sha256}=inspectBusinessFile(bytes,row.mimeType);
+    const imageInfo=row.purpose==="field-visit-evidence"?await validateVisitImage(bytes,row.mimeType):undefined;
     await ctx.db.transaction(async (tx) => {
       if(row.purpose==="field-visit-evidence"){const [a]=await tx.select().from(fieldVisitAttempts).where(eq(fieldVisitAttempts.id,row.visitAttemptId!)).for("update");if(!a||a.consumedAt||a.expiresAt<new Date())throw new HttpError(409,"Capture attempt expired during upload.");}
-      const [attached] = await tx.update(documents).set({ status: "Attached", attachedAt: new Date(),...(imageInfo?{imageInfo}:{}) })
+      const [attached] = await tx.update(documents).set({ status: "Attached", attachedAt: new Date(),sha256,...(imageInfo?{imageInfo}:{}) })
         .where(and(eq(documents.id, row.id), eq(documents.status, "Pending"))).returning();
       if (attached) await audit(tx, actor.id, "Document attached", "Document", row.id);
     });
@@ -110,7 +115,7 @@ export function createDocumentRouter(ctx: Context) {
     const { data, error } = await ctx.admin.storage.from(row.bucket).createSignedUrl(row.objectPath, 60);
     if (error) throw new HttpError(502, "Document access is temporarily unavailable.");
     await audit(ctx.db, actor.id, "Document opened", "Document", row.id);
-    res.json({ success: true, data: { id: row.id, fileName: row.fileName, mimeType: row.mimeType, sizeBytes: row.sizeBytes, url: data.signedUrl, expiresIn: 60 }, message: "Temporary document access granted" });
+    res.json({ success: true, data: { id: row.id, fileName: row.fileName, mimeType: row.mimeType, sizeBytes: row.sizeBytes,sha256:row.sha256, url: data.signedUrl, expiresIn: 60 }, message: "Temporary document access granted" });
   });
 
   router.get("/profile/avatar", async (_req, res) => {

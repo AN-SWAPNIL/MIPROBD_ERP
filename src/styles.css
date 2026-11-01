@@ -90,6 +90,14 @@ button:disabled {
 }
 
 @media screen {
+  .app-content-shell:has(.print-preview) {
+    transition: none;
+  }
+
+  .print-preview .print-sheet {
+    zoom: var(--print-preview-zoom, 1);
+  }
+
   .erp-table-frame > table > thead {
     background: #172554 !important;
     color: #ffffff !important;
@@ -124,6 +132,13 @@ button:disabled {
 }
 
 @media print {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
   .transaction-print-flow table > thead {
     display: table-row-group;
   }
@@ -194,6 +209,7 @@ button:disabled {
   }
 
   .print-sheet {
+    zoom: 1 !important;
     width: 210mm !important;
     min-height: 297mm !important;
     border: 0 !important;

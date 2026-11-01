@@ -6,7 +6,7 @@ import { audit, identity } from "../foundation/context.js";
 import { assertAllowed, HttpError } from "../foundation/errors.js";
 import { hasCapability, hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
 import { lockActor, newId, nextNumber, postingIdentity } from "../operations/common.js";
-import { fifoPreview } from "../operations/inventory.js";
+import { fifoPreview, readFifoBatches } from "../operations/inventory.js";
 import { deliveryInput, quotationInput, salesTotals } from "./contracts.js";
 import { checkPostingDate, lockOrder, lockPosting } from "./locks.js";
 import { readDeliveries } from "./posting-records.js";
@@ -15,6 +15,7 @@ import { cumulativeShare, D, money, sum } from "./money.js";
 import type { ProfitPreview } from "../../src/domains/erp.types.js";
 import { businessDate } from "../../src/lib/date.js";
 import { restrictDeliveryFinancials } from "../salesWorkspace.js";
+import { recordStockLedger } from "../ledger/service.js";
 
 export function createFulfilmentRouter(ctx: Context) {
   const router = Router();
@@ -50,7 +51,7 @@ export function createFulfilmentRouter(ctx: Context) {
         let revenue = sum(posted.filter((line) => line.orderLineId === source.id).map((line) => line.lineTotal));
         let discounts = sum(posted.filter((line) => line.orderLineId === source.id).map((line) => line.discount));
         if (issued.plus(request.quantity).gt(source.quantity)) throw new HttpError(409, "Delivery exceeds the remaining ordered quantity.");
-        const batches = await tx.select().from(stockBatches).where(eq(stockBatches.productId, source.productId)).orderBy(stockBatches.receivedDate, stockBatches.id).for("update");
+        const batches = await readFifoBatches(tx, source.productId, true, input.date);
         const plan = fifoPreview(source.productId, request.quantity, input.date, batches, request.batchId);
         if (plan.requiresOverride) {
           assertAllowed(hasCapability(user, "approve_stock_override"), "This role cannot override FIFO.");
@@ -77,6 +78,7 @@ export function createFulfilmentRouter(ctx: Context) {
       const number = await nextNumber(tx, "DC", input.date);
       await tx.insert(deliveries).values({ id, challanNumber: number, orderId: order.id, customerId: order.customerId, customerName: order.snapshot.customerName, ownerId: order.ownerId, date: input.date, remarks: input.remarks, receiverName: input.receiverName, overrideReason: override ? input.overrideReason : "", dispatchedBy: user.id });
       await tx.insert(stockMovements).values(movements.map((movement) => ({ ...movement, reference: number })));
+      for (const movement of movements) await recordStockLedger(tx, user, { ...movement, reference: number });
       await tx.insert(deliveryLines).values(plans);
       const complete = orderedLines.every((line) => sum([...posted, ...plans].filter((posted) => posted.orderLineId === line.id).map((posted) => posted.quantity)).eq(line.quantity));
       await tx.update(salesOrders).set({ status: complete ? "Delivered" : "Partially Delivered", version: order.version + 1, updatedAt: new Date() }).where(eq(salesOrders.id, order.id));
@@ -93,7 +95,7 @@ export function createFulfilmentRouter(ctx: Context) {
     const data = await ctx.db.transaction(async (tx): Promise<ProfitPreview> => {
       const lines = await canonicalSalesLines(tx, inputs); const result: ProfitPreview["lines"] = []; let expectedCogs = new D(0);
       for (const line of lines) {
-        const batches = await tx.select().from(stockBatches).where(eq(stockBatches.productId, line.productId));
+        const batches = await readFifoBatches(tx, line.productId);
         const plan = fifoPreview(line.productId, line.quantity, businessDate(), batches);
         const cost = sum(plan.allocations.map((allocation) => { const batch = batches.find((row) => row.id === allocation.batchId)!; return cumulativeShare(batch.receivedValueBdt, batch.quantityReceived, new D(batch.quantityReceived).minus(batch.quantityAvailable).toString(), new D(batch.receivedValueBdt).minus(batch.availableValueBdt).toString(), allocation.quantity); }));
         const profit = new D(line.lineTotal).minus(cost); expectedCogs = expectedCogs.plus(cost);

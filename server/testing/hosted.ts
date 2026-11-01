@@ -11,15 +11,23 @@ import { createContext } from "../foundation/context.js";
 import { createFoundationRouter } from "../foundation/router.js";
 import { isolatedPeer, localApiRequest } from "./http.js";
 
-export async function hostedHarness(label: string) {
+export async function hostedHarness(label: string, options: { serialRequests?: boolean } = {}) {
   const contexts = [createContext(), createContext()];
   const suffix = randomUUID(); const password = `T!${randomBytes(24).toString("hex")}`;
   const peer = isolatedPeer(suffix);
   const identities: { id: string; authId: string; email: string; token: string; role: Role }[] = [];
   const servers: ReturnType<ReturnType<typeof express>["listen"]>[] = [];
   const bases: string[] = [];
+  let queue = Promise.resolve();
   for (const ctx of contexts) {
-    const app = express(); app.use(express.json({ limit: "256kb" })); app.use("/api", createFoundationRouter(ctx));
+    const app = express(); app.use(express.json({ limit: "256kb" }));
+    if (options.serialRequests) app.use(async (_req, res, next) => {
+      const before = queue; let release!: () => void; const done = new Promise<void>((resolve) => { release = resolve; });
+      queue = before.then(() => done);
+      let closed = false; res.once("finish", release); res.once("close", () => { closed = true; release(); });
+      await before; if (closed || res.writableEnded) { release(); return; } next();
+    });
+    app.use("/api", createFoundationRouter(ctx));
     const server = app.listen(0, "127.0.0.1"); servers.push(server);
     await new Promise<void>((resolve) => server.once("listening", resolve)); bases.push(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api`);
   }

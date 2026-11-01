@@ -1,4 +1,5 @@
-import { Camera, KeyRound, Save } from "lucide-react";
+import { Camera, KeyRound, Save,WalletCards } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import Button from "../../components/ui/Button";
@@ -10,6 +11,7 @@ import { useToastStore } from "../../lib/ui/toast";
 import { foundationMode } from "../../lib/runtime";
 import { apiClient } from "../../lib/api/client";
 import { MfaControl } from "../auth/MfaSecurity";
+import { canReadPayroll } from "../../domains/ledger/access";
 
 type ProfileValues = {
   name: string;
@@ -21,6 +23,7 @@ type ProfileValues = {
 };
 
 export default function ProfilePage() {
+  const navigate=useNavigate();
   const session = useAuthStore((state) => state.session);
   const updateUser = useAuthStore((state) => state.updateUser);
   const resetPassword = useAuthStore((state) => state.resetPassword);
@@ -60,6 +63,7 @@ export default function ProfilePage() {
       <PageHeader
         eyebrow="Profile"
         title="Profile & Security Settings"
+        actions={foundationMode?<>{canReadPayroll(session.user)?<Button icon={<WalletCards className="h-4 w-4"/>} onClick={()=>navigate("/backend/payroll")}>Payroll & Commission</Button>:null}<Button icon={<WalletCards className="h-4 w-4"/>} onClick={()=>navigate("/backend/payslips")}>My Payslips</Button></>:undefined}
         subtitle="Update profile photo and contact details. Your assigned role and capabilities remain locked for the signed-in session."
       />
 

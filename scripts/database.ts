@@ -6,10 +6,12 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import { connectDatabase } from "../database/client.js";
 import { pathToFileURL } from "node:url";
+import { assertHostedDatabaseProject } from "../database/project.js";
 
 export async function backupDatabase() {
   const url = process.env.DATABASE_MIGRATION_URL;
   if (!url) throw new Error("DATABASE_MIGRATION_URL is required");
+  assertHostedDatabaseProject(url, process.env.SUPABASE_URL!);
   const { client, db } = connectDatabase(url);
   try {
     const payload = await db.transaction(async (tx) => {
@@ -19,12 +21,14 @@ export async function backupDatabase() {
       return { format: "mipro-erp-backup-v1", capturedAt: new Date().toISOString(), projectRef: new URL(process.env.SUPABASE_URL!).hostname.split(".")[0], schema: "erp_private", records };
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
     const text = JSON.stringify(payload, null, 2);
-    const folder = new URL("../artifacts/backups/", import.meta.url);
+    const ref = payload.projectRef;
+    if (!/^[a-z]{20}$/.test(ref)) throw new Error("Unexpected backup project identity");
+    const folder = new URL(`../artifacts/backups/${ref}/`, import.meta.url);
     await mkdir(folder, { recursive: true });
     const path = new URL(`database-${Date.now()}.json`, folder);
     await writeFile(path, text, { flag: "wx", mode: 0o600 });
     await writeFile(new URL(`${path.href}.sha256`), createHash("sha256").update(text).digest("hex"), { flag: "wx", mode: 0o600 });
-    console.log("ERP schema backup saved under artifacts/backups; tables:", Object.keys(payload.records).length);
+    console.log("ERP schema backup saved in its project-specific artifacts/backups folder; tables:", Object.keys(payload.records).length);
     return path;
   } finally { await client.end(); }
 }

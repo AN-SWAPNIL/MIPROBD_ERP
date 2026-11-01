@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { domainRequest } from "../services";
 import { apiRequest } from "../../lib/api/client";
+import { attachmentMime } from "../../lib/files/attachments";
 import { activityRowSchema, employeeAccessSchema, employeeRefSchema, followUpRowSchema, leadRowSchema, pageSchema, planRowSchema, referenceDataSchema, scoreRuleSchema, targetRowSchema } from "./persistentContracts";
 
 export type WorkforceFilters = { page?:number;pageSize?:number;search?:string;employee?:string;status?:string;from?:string;to?:string };
@@ -9,8 +10,10 @@ const idSchema=z.object({id:z.string()});
 const send=<T>(path:string,schema:z.ZodType<T>,payload:unknown,method="POST")=>domainRequest(path,schema,{method,body:JSON.stringify(payload)});
 export const workforceService = {
   async upload(file:File,purpose:"marketing-evidence"|"employee-avatar",employeeId?:string) {
-    const upload=await apiRequest<{id:string;signedUrl:string}>("/api/uploads",{method:"POST",body:JSON.stringify({purpose,employeeId,fileName:file.name,mimeType:file.type,sizeBytes:file.size})});
-    const stored=await fetch(upload.data.signedUrl,{method:"PUT",headers:{"Content-Type":file.type},body:file});
+    const mimeType=attachmentMime(file.name,file.type);
+    if(file.size>10*1024*1024||purpose==="employee-avatar"&&(!mimeType.startsWith("image/")||file.size>2*1024*1024))throw new Error("Use a business attachment up to 10 MB, or a profile image up to 2 MB.");
+    const upload=await apiRequest<{id:string;signedUrl:string}>("/api/uploads",{method:"POST",body:JSON.stringify({purpose,employeeId,fileName:file.name,mimeType,sizeBytes:file.size})});
+    const stored=await fetch(upload.data.signedUrl,{method:"PUT",headers:{"Content-Type":mimeType},body:file});
     if(!stored.ok)throw new Error("File upload failed; no business submission was saved.");
     await apiRequest(`/api/uploads/${upload.data.id}/complete`,{method:"POST",body:"{}"});return upload.data.id;
   },

@@ -1,3 +1,4 @@
+import { openWorkspace, signOutWorkspace } from "./workspace-browser.js";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
@@ -17,15 +18,15 @@ export async function workforceBrowserSmoke(apiBase:string,adminEmail:string,sal
       page.on("response",(r)=>{const path=new URL(r.url()).pathname;if(path.startsWith("/api/")&&r.status()>=400)errors.push(`${r.status()} ${path}`);});
       const capture=async(label:string)=>{await expect(page.getByText("Loading saved records",{exact:true})).toHaveCount(0);assert.deepEqual(errors,[],`${label}: API and browser errors`);assert.ok(await page.locator("body").evaluate((b)=>b.scrollWidth<=b.clientWidth+2),`${label}: no overflow at ${width}`);await page.screenshot({path:`artifacts/backend/workforce-${label}-${width}.png`,fullPage:true});};
       const login=async(email:string)=>{await page.goto("http://localhost:5196/login",{waitUntil:"networkidle"});await page.getByLabel("Email",{exact:true}).fill(email);await page.getByLabel("Password",{exact:true}).fill(password);const response=page.waitForResponse((r)=>new URL(r.url()).pathname==="/api/auth/login"&&r.request().method()==="POST");await page.getByRole("button",{name:"Sign In",exact:true}).click();assert.equal((await response).status(),200);await page.waitForURL("**/backend");};
-      await login(adminEmail);await page.getByRole("link",{name:"Employees",exact:true}).click();await page.getByTestId("persistent-employees").waitFor();
+      await login(adminEmail);await openWorkspace(page, "Employees");await page.getByTestId("persistent-employees").waitFor();
       await page.getByRole("combobox",{name:"Employee status",exact:true}).selectOption("Active");await page.getByLabel("Search employees",{exact:true}).fill("Renamed");await expect(page.locator("main")).toContainText("Renamed");await capture("directory");
       const edit=page.getByRole("button",{name:/^Edit .*Renamed$/}).filter({visible:true}).first();await edit.click();await page.getByRole("dialog",{name:"Edit Employee",exact:true}).waitFor();await expect(page.getByRole("combobox",{name:"Reports To",exact:true})).toBeVisible();await capture("profile");await page.getByRole("button",{name:"Close",exact:true}).click();
       await page.getByRole("button",{name:/^Access for .*Renamed$/}).filter({visible:true}).first().click();await page.getByRole("dialog",{name:"Employee Access",exact:true}).waitFor();await expect(page.getByRole("combobox",{name:"Assigned Role",exact:true})).toBeVisible();await capture("access");await page.getByRole("button",{name:"Close",exact:true}).click();
       await page.goto(`http://localhost:5196/backend/employees?view=activity&employee=${employeeId}`,{waitUntil:"domcontentloaded"});await page.getByTestId("persistent-marketing").waitFor();await expect(page.getByRole("combobox",{name:"Employee",exact:true})).toHaveValue(employeeId);await capture("team");
       for(const tab of ["Leads","Follow-ups","Daily / Monthly Plans","Monthly Targets","Performance","Score Rules"]){await page.getByRole("tab",{name:tab,exact:true}).click();await expect(page.getByRole("tab",{name:tab,exact:true})).toHaveAttribute("aria-selected","true");await page.waitForLoadState("networkidle");await capture(tab.toLowerCase().replaceAll(/[^a-z]+/g,"-"));}
-      await page.getByRole("button",{name:"Sign out",exact:true}).click();await login(salesEmail);
+      await signOutWorkspace(page);await login(salesEmail);
       await expect(page.getByRole("link",{name:"Employees",exact:true})).toHaveCount(0);
-      await page.getByRole("link",{name:"Sales & Marketing",exact:true}).click();await page.getByTestId("persistent-marketing").waitFor();
+      await openWorkspace(page, "Sales & Marketing");await page.getByTestId("persistent-marketing").waitFor();
       await page.getByRole("button",{name:"New Activity",exact:true}).click();await page.getByRole("dialog",{name:"Activity",exact:true}).waitFor();
       await page.getByLabel("Activity Category",{exact:true}).selectOption("GENERAL_NOTE");await page.getByLabel("Purpose",{exact:true}).fill(`DEV TEST browser activity ${width}`);await page.getByLabel("Outcome / Details",{exact:true}).fill("Office coordination recorded through own login");await page.getByLabel("Submission",{exact:true}).selectOption("Submitted");await capture("activity-form");
       await page.getByRole("button",{name:"Save Activity",exact:true}).click();await expect(page.getByRole("dialog")).toHaveCount(0);await expect(page.getByTestId("persistent-marketing")).toContainText(`DEV TEST browser activity ${width}`);

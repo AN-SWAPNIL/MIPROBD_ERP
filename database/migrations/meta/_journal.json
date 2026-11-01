@@ -169,6 +169,328 @@
       "when": 1792858072531,
       "tag": "0023_operational_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793198351772,
+      "tag": "0024_bright_deathbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793202612950,
+      "tag": "0025_motionless_weapon_omega",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793214423235,
+      "tag": "0026_opening_postings",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793214906285,
+      "tag": "0027_opening_guard_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793227498613,
+      "tag": "0028_approval_and_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793228517995,
+      "tag": "0029_ledger_approval_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793229958403,
+      "tag": "0030_ledger_source_guard_fix",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793231222463,
+      "tag": "0031_ledger_source_mapping_proof",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1793276079001,
+      "tag": "0032_partial_stock_holds",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793282010295,
+      "tag": "0033_approved_stock_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793283444655,
+      "tag": "0034_stock_control_guard_aliases",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793295521874,
+      "tag": "0035_customer_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793295683191,
+      "tag": "0036_return_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793298709437,
+      "tag": "0037_return_source_dates",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793299349194,
+      "tag": "0038_return_date_guard_fix",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793302598709,
+      "tag": "0039_confidential_payroll",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793302890141,
+      "tag": "0040_payroll_source_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793303041370,
+      "tag": "0041_payroll_ledger_dispatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1793334178926,
+      "tag": "0042_payroll_policy_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1793334371488,
+      "tag": "0043_payroll_deferred_source_dispatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1793334858383,
+      "tag": "0044_payroll_approval_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1793335401671,
+      "tag": "0045_payroll_money_aliases",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1793335693882,
+      "tag": "0046_payroll_employment_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1793335821750,
+      "tag": "0047_payroll_run_alias_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1793337027461,
+      "tag": "0048_payroll_beneficiary_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1793337340354,
+      "tag": "0049_opening_return_credits",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1793340215333,
+      "tag": "0050_payroll_installment_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1793378240699,
+      "tag": "0051_supplier_rejections",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1793378406885,
+      "tag": "0052_supplier_claim_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1793378948381,
+      "tag": "0053_supplier_credit_cash_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1793379323031,
+      "tag": "0054_supplier_source_aliases",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1793379733542,
+      "tag": "0055_supplier_deferred_ledger_dispatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1793379778143,
+      "tag": "0056_replacement_cost_attestation",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1793380662425,
+      "tag": "0057_rejected_replacement_inspection",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1793380697767,
+      "tag": "0058_rejected_replacement_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1793381191099,
+      "tag": "0059_exact_supplier_poisha",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1793388555090,
+      "tag": "0060_quality_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1793389126608,
+      "tag": "0061_quality_evidence_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1793411511835,
+      "tag": "0062_payroll_compensation_segments",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1793506474881,
+      "tag": "0063_breezy_photon",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1793506508673,
+      "tag": "0064_replacement_inspection_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1793508518112,
+      "tag": "0065_omniscient_black_panther",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1793512414470,
+      "tag": "0066_business_document_types",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1793546150300,
+      "tag": "0067_super_admin_approval_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1793547163860,
+      "tag": "0068_super_admin_field_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1793550176839,
+      "tag": "0069_operational_health_receipts",
+      "breakpoints": true
     }
   ]
 }

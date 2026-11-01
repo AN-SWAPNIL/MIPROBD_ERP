@@ -1,0 +1,17 @@
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Save } from "lucide-react";
+import Button from "../../components/ui/Button";
+import { apiRequest } from "../../lib/api/client";
+import { businessDate } from "../../lib/date";
+import { ErrorBlock, inputClass, labelClass, textareaClass } from "../components";
+import { claimSchema, replacementInput } from "./contracts";
+export default function ReplacementForm({claimId,onSaved,onCancel}:{claimId:string;onSaved:(receiptId:string)=>void;onCancel:()=>void}){
+ const client=useQueryClient(),[key]=useState(()=>crypto.randomUUID()),[form,setForm]=useState({quantity:"",rejectedQuantity:"0",lotNumber:"",batchNumber:"",manufacturingDate:"",expiryDate:"",receivedDate:businessDate(),location:"",inspection:"",proofReference:""}),[confirmed,setConfirmed]=useState(false);
+ const change=(k:keyof typeof form,v:string)=>setForm(f=>({...f,[k]:v}));
+ const save=useMutation({mutationFn:async()=>claimSchema.parse((await apiRequest(`/api/supplier-claims/${claimId}/replacements`,{method:"POST",headers:{"Idempotency-Key":key},body:JSON.stringify(replacementInput.parse({...form,additionalCostsConfirmedZero:confirmed}))})).data),onSuccess:async(data)=>{await client.invalidateQueries();const receipt=data.replacements.filter(r=>r.batchNumber===form.batchNumber.trim()&&r.state==="Draft").at(-1);if(receipt)onSaved(receipt.id);}});
+ return <section className="border-b border-blue-100"><h3 className="px-4 pt-4 text-sm font-semibold">Replacement Receipt Inspection</h3><form className="grid min-w-0 gap-4 p-4 sm:grid-cols-2" onSubmit={e=>{e.preventDefault();save.mutate();}}>{(["quantity","rejectedQuantity","lotNumber","batchNumber","manufacturingDate","expiryDate","receivedDate","location"] as const).map(k=><label key={k}><span className={labelClass}>{{quantity:"Accepted quantity",rejectedQuantity:"Rejected quantity",lotNumber:"New LOT",batchNumber:"New batch",manufacturingDate:"Manufacturing date",expiryDate:"Expiry date",receivedDate:"Received date",location:"Warehouse BIN"}[k]}</span><input aria-label={`Replacement ${k}`} required className={inputClass} type={k.endsWith("Date")?"date":"text"} inputMode={k==="quantity"||k==="rejectedQuantity"?"decimal":undefined} value={form[k]} onChange={e=>change(k,e.target.value)}/></label>)}
+ <label className="sm:col-span-2"><span className={labelClass}>Inspection findings</span><textarea required minLength={5} maxLength={2000} className={textareaClass} value={form.inspection} onChange={e=>change("inspection",e.target.value)}/></label><label className="sm:col-span-2"><span className={labelClass}>Supplier / inspection evidence reference</span><input required minLength={3} maxLength={200} className={inputClass} value={form.proofReference} onChange={e=>change("proofReference",e.target.value)}/></label>
+ <label className="flex items-start gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} className="mt-1"/>No additional freight, duty or local receiving costs. Additional-cost replacement costing is not enabled here.</label>
+ {save.isError?<div className="sm:col-span-2"><ErrorBlock error={save.error}/></div>:null}<div className="flex justify-end gap-2 sm:col-span-2"><Button type="button" onClick={onCancel}>Cancel</Button><Button type="submit" variant="primary" disabled={!confirmed||save.isPending} icon={<Save className="h-4 w-4"/>}>Save Receipt Draft</Button></div></form></section>;
+}

@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Calculator, Plus, Save, Trash2, TrendingDown, TrendingUp, Truck } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import Button from "../../components/ui/Button";
@@ -20,6 +20,10 @@ import { inputClass, labelClass, textareaClass } from "../components";
 import { inventoryService, salesService } from "../services";
 import { formatMoney as formatCurrency, formatQuantity as formatNumber } from "../../utils/precise";
 import { Decimal } from "decimal.js";
+import { foundationMode } from "../../lib/runtime";
+import PersistentDeliveryLine from "./PersistentDeliveryLine";
+import SalesRecordSelect from "./SalesRecordSelect";
+import { getSalesPage } from "./pages";
 
 const Amount = Decimal.clone({ precision: 48, rounding: Decimal.ROUND_HALF_UP });
 
@@ -58,8 +62,8 @@ export function QuotationForm({
   quotation,
   initialCustomerId,
   leadId,
-  customers,
-  products,
+  customers: initialCustomers,
+  products: initialProducts,
   canViewProfit,
   busy,
   onSubmit
@@ -74,6 +78,11 @@ export function QuotationForm({
   onSubmit: (payload: Partial<Quotation>) => void;
 }) {
   const [customerId, setCustomerId] = useState(quotation?.customerId ?? initialCustomerId ?? "");
+  const [pickedCustomers, setPickedCustomers] = useState<Customer[]>([]);
+  const [pickedProducts, setPickedProducts] = useState<Product[]>([]);
+  const hydration = useQuery({ queryKey: ["sales", "quote-customer", customerId], enabled: foundationMode && Boolean(customerId), queryFn: ({ signal }) => getSalesPage("customers", { selectedId: customerId, pageSize: "1" }, signal) });
+  const customers = [...pickedCustomers, ...(hydration.data?.selected ? [hydration.data.selected] : []), ...initialCustomers];
+  const products = [...pickedProducts, ...initialProducts];
   const [date, setDate] = useState(quotation?.date ?? businessDate());
   const [validityDays, setValidityDays] = useState(String(quotation?.validityDays ?? 15));
   const [paymentTerms, setPaymentTerms] = useState(quotation?.paymentTerms ?? customers.find((entry) => entry.id === initialCustomerId)?.paymentTerms ?? "30 days");
@@ -89,9 +98,10 @@ export function QuotationForm({
     return { subtotal: summary.subtotal.plus(gross), discount: summary.discount.plus(line.discount || 0), total: summary.total.plus(gross).minus(line.discount || 0) };
   }, { subtotal: new Amount(0), discount: new Amount(0), total: new Amount(0) }), [lines]);
   const normalizedLines = () => lines.map((line) => {
-    const product = products.find((entry) => entry.id === line.productId)!;
+    const product = products.find((entry) => entry.id === line.productId);
+    const original = quotation?.lines.find((entry) => entry.productId === line.productId);
     const total = new Amount(line.quantity).mul(line.unitPrice).toDecimalPlaces(2).minus(line.discount || 0);
-    return { id: line.id, productId: product.id, productCode: product.code, productName: product.name, quantity: line.quantity, unitPrice: line.unitPrice, discount: new Amount(line.discount || 0).toFixed(2), lineTotal: total.toFixed(2) };
+    return { id: line.id, productId: line.productId, productCode: product?.code ?? original?.productCode ?? "", productName: product?.name ?? original?.productName ?? "", quantity: line.quantity, unitPrice: line.unitPrice, discount: new Amount(line.discount || 0).toFixed(2), lineTotal: total.toFixed(2) };
   });
   const profitMutation = useMutation({
     mutationFn: () => salesService.profitPreview(normalizedLines()),
@@ -107,7 +117,7 @@ export function QuotationForm({
   return (
     <form className="grid gap-4" onSubmit={submit}>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="sm:col-span-2"><span className={labelClass}>Customer</span><select className={inputClass} required value={customerId} onChange={(event) => { const next = customers.find((entry) => entry.id === event.target.value); setCustomerId(event.target.value); if (next) setPaymentTerms(next.paymentTerms); }}><option value="">Select customer</option>{customers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        <div className="sm:col-span-2"><span className={labelClass}>Customer</span>{foundationMode ? <SalesRecordSelect kind="customers" label="Customer" required value={customerId} filters={{ activeOnly: "true" }} display={(row) => row.name} onChange={(row) => { setCustomerId(row?.id ?? ""); if (row) { setPickedCustomers((current) => [row, ...current.filter((entry) => entry.id !== row.id)]); setPaymentTerms(row.paymentTerms); } }} /> : <select aria-label="Customer" className={inputClass} required value={customerId} onChange={(event) => { const next = customers.find((entry) => entry.id === event.target.value); setCustomerId(event.target.value); if (next) setPaymentTerms(next.paymentTerms); }}><option value="">Select customer</option>{customers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select>}</div>
         <label><span className={labelClass}>Quotation Date</span><input className={inputClass} type="date" required value={date} onChange={(event) => setDate(event.target.value)} /></label>
         <label><span className={labelClass}>Validity (days)</span><input className={inputClass} type="number" min="1" step="1" required value={validityDays} onChange={(event) => setValidityDays(event.target.value)} /></label>
         <label className="sm:col-span-2"><span className={labelClass}>Payment Terms</span><input className={inputClass} required value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} /></label>
@@ -116,7 +126,21 @@ export function QuotationForm({
       <div className="overflow-x-auto rounded-md border border-slate-200">
         <table className="min-w-[900px] w-full text-left text-sm">
           <thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Quantity</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Discount</th><th className="px-3 py-2 text-right">Line Total</th><th className="w-12 px-3 py-2" /></tr></thead>
-          <tbody className="divide-y divide-slate-100">{lines.map((line) => { const product = products.find((entry) => entry.id === line.productId); const total = new Amount(line.quantity || 0).mul(line.unitPrice || 0).toDecimalPlaces(2).minus(line.discount || 0).toFixed(2); return <tr key={line.id}><td className="px-3 py-2"><select aria-label="Product variant" className={inputClass} required value={line.productId} onChange={(event) => { const next = products.find((entry) => entry.id === event.target.value); updateLine(line.id, "productId", event.target.value); if (next && !line.unitPrice) updateLine(line.id, "unitPrice", next.standardSalePrice); }}><option value="">Select product</option>{products.map((entry) => <option key={entry.id} value={entry.id}>{entry.code} · {entry.name}</option>)}</select>{product ? <small className="mt-1 block text-slate-400">Standard {formatCurrency(product.standardSalePrice)}</small> : null}</td><td className="px-3 py-2"><input aria-label="Quantity" className={inputClass} type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={(event) => updateLine(line.id, "quantity", event.target.value)} required /></td><td className="px-3 py-2"><input aria-label="Unit price" className={inputClass} type="number" min="0.01" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.id, "unitPrice", event.target.value)} required /></td><td className="px-3 py-2"><input aria-label="Discount" className={inputClass} type="number" min="0" max={Number(line.quantity || 0) * Number(line.unitPrice || 0)} step="0.01" value={line.discount} onChange={(event) => updateLine(line.id, "discount", event.target.value)} /></td><td className="px-3 py-2 text-right font-bold">{formatCurrency(total)}</td><td className="px-3 py-2"><Button type="button" variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} onClick={() => setLines((current) => current.filter((entry) => entry.id !== line.id))} disabled={lines.length === 1} aria-label="Remove line" title="Remove line" /></td></tr>; })}</tbody>
+          <tbody className="divide-y divide-slate-100">{lines.map((line) => {
+            const product = products.find((entry) => entry.id === line.productId);
+            const total = new Amount(line.quantity || 0).mul(line.unitPrice || 0).toDecimalPlaces(2).minus(line.discount || 0).toFixed(2);
+            return <tr key={line.id}>
+              <td className="min-w-72 px-3 py-2">{foundationMode ? <SalesRecordSelect kind="products" label="Product variant" value={line.productId} required filters={{ activeOnly: "true" }} display={(row) => `${row.code} | ${row.name}`} onChange={(row) => {
+                updateLine(line.id, "productId", row?.id ?? "");
+                if (row) { setPickedProducts((current) => [row, ...current.filter((entry) => entry.id !== row.id)]); if (!line.unitPrice) updateLine(line.id, "unitPrice", row.standardSalePrice); }
+              }} /> : <select aria-label="Product variant" className={inputClass} required value={line.productId} onChange={(event) => { const next = products.find((entry) => entry.id === event.target.value); updateLine(line.id, "productId", event.target.value); if (next && !line.unitPrice) updateLine(line.id, "unitPrice", next.standardSalePrice); }}><option value="">Select product</option>{products.map((entry) => <option key={entry.id} value={entry.id}>{entry.code} | {entry.name}</option>)}</select>}{product ? <small className="mt-1 block text-slate-400">Standard {formatCurrency(product.standardSalePrice)}</small> : null}</td>
+              <td className="px-3 py-2"><input aria-label="Quantity" className={inputClass} type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={(event) => updateLine(line.id, "quantity", event.target.value)} required /></td>
+              <td className="px-3 py-2"><input aria-label="Unit price" className={inputClass} type="number" min="0.01" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.id, "unitPrice", event.target.value)} required /></td>
+              <td className="px-3 py-2"><input aria-label="Discount" className={inputClass} type="number" min="0" max={Number(line.quantity || 0) * Number(line.unitPrice || 0)} step="0.01" value={line.discount} onChange={(event) => updateLine(line.id, "discount", event.target.value)} /></td>
+              <td className="px-3 py-2 text-right font-bold">{formatCurrency(total)}</td>
+              <td className="px-3 py-2"><Button type="button" variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} onClick={() => setLines((current) => current.filter((entry) => entry.id !== line.id))} disabled={lines.length === 1} aria-label="Remove line" title="Remove line" /></td>
+            </tr>;
+          })}</tbody>
         </table>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -176,7 +200,7 @@ export function DeliveryForm({
       const prior = deliveredLines(line.productId);
       const cumulative = deliveredFor(line.productId).plus(row.quantity);
       const share = (key: "lineTotal" | "discount") => new Amount(line[key]).mul(cumulative).div(line.quantity).toDecimalPlaces(2).minus(prior.reduce((sum, entry) => sum.plus(entry[key]), new Amount(0))).toFixed(2);
-      return [{ ...line, quantity: row.quantity, lineTotal: share("lineTotal"), discount: share("discount"), batchId: batch?.id ?? "AUTO", batchNumber: batch?.batchNumber ?? "FIFO AUTO" }];
+      return [{ ...line, quantity: row.quantity, lineTotal: share("lineTotal"), discount: share("discount"), batchId: foundationMode ? row.batchId : batch?.id ?? "AUTO", batchNumber: batch?.batchNumber ?? "FIFO AUTO" }];
     });
     try {
       const previews = await Promise.all(lines.map((line) => inventoryService.dispatchPreview({ productId: line.productId, batchId: line.batchId, quantity: line.quantity, date })));
@@ -199,7 +223,13 @@ export function DeliveryForm({
         <label><span className={labelClass}>Dispatch Date</span><input className={inputClass} type="date" required value={date} onChange={(event) => setDate(event.target.value)} /></label>
         <label><span className={labelClass}>Receiver Name</span><input className={inputClass} value={receiverName} onChange={(event) => setReceiverName(event.target.value)} /></label>
       </div>
-      {order ? <div className="grid gap-3">{order.lines.map((line) => { const row = rowFor(line); let remaining = new Amount(row.quantity || 0); const automatic = row.eligible.flatMap((batch) => { if (remaining.lte(0)) return []; const quantity = Amount.min(remaining, batch.quantityAvailable); remaining = remaining.minus(quantity); return [{ batch, quantity: quantity.toFixed(4) }]; }); return <fieldset className="rounded-md border border-slate-200 p-3" key={line.id}><legend className="px-1 text-sm font-bold">{line.productCode} · {line.productName}</legend><div className="grid gap-3 sm:grid-cols-3"><label><span className={labelClass}>Delivery Qty (max {formatNumber(row.remaining)})</span><input className={inputClass} type="number" min="0" max={row.remaining} step="0.0001" value={row.quantity} onChange={(event) => update(line.id, line, "quantity", event.target.value)} /></label><label className="sm:col-span-2"><span className={labelClass}>Batch Allocation</span><select className={inputClass} required value={row.batchId} onChange={(event) => update(line.id, line, "batchId", event.target.value)}><option value="AUTO">Automatic FIFO split · oldest eligible stock first</option>{row.eligible.map((batch, index) => <option key={batch.id} value={batch.id}>{index === 0 ? "Oldest · " : "Override · "}{batch.lotNumber} · received {batch.receivedDate} · expiry {batch.expiryDate} · {formatNumber(batch.quantityAvailable)} available</option>)}</select>{!row.eligible.length ? <small className="mt-1 block font-semibold text-red-600">No non-expired stock is available for this product.</small> : null}</label></div>{row.batchId === "AUTO" && automatic.length ? <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 p-3"><span className="text-[10px] font-bold uppercase text-cyan-800">Automatic FIFO plan</span><div className="mt-2 flex flex-wrap gap-2">{automatic.map(({ batch, quantity }) => <span className="rounded bg-white px-2 py-1 text-xs font-semibold text-slate-700" key={batch.id}>{formatNumber(quantity)} · Lot {batch.lotNumber} · exp {batch.expiryDate}</span>)}</div>{remaining.gt(0) ? <small className="mt-2 block font-semibold text-red-700">Short by {formatNumber(remaining.toFixed(4))} units.</small> : null}</div> : null}</fieldset>; })}</div> : null}
+      {order ? <div className="grid gap-3">{order.lines.map((line) => {
+        const row = rowFor(line);
+        if (foundationMode) return <PersistentDeliveryLine key={line.id} line={line} date={date} quantity={row.quantity} batchId={row.batchId} remaining={row.remaining} update={(key, value) => update(line.id, line, key, value)} />;
+        let remaining = new Amount(row.quantity || 0);
+        const automatic = row.eligible.flatMap((batch) => { if (remaining.lte(0)) return []; const quantity = Amount.min(remaining, batch.quantityAvailable); remaining = remaining.minus(quantity); return [{ batch, quantity: quantity.toFixed(4) }]; });
+        return <fieldset className="rounded-md border border-slate-200 p-3" key={line.id}><legend className="px-1 text-sm font-bold">{line.productCode} · {line.productName}</legend><div className="grid gap-3 sm:grid-cols-3"><label><span className={labelClass}>Delivery Qty (max {formatNumber(row.remaining)})</span><input className={inputClass} type="number" min="0" max={row.remaining} step="0.0001" value={row.quantity} onChange={(event) => update(line.id, line, "quantity", event.target.value)} /></label><label className="sm:col-span-2"><span className={labelClass}>Batch Allocation</span><select className={inputClass} required value={row.batchId} onChange={(event) => update(line.id, line, "batchId", event.target.value)}><option value="AUTO">Automatic FIFO split · oldest eligible stock first</option>{row.eligible.map((batch, index) => <option key={batch.id} value={batch.id}>{index === 0 ? "Oldest · " : "Override · "}{batch.lotNumber} · received {batch.receivedDate} · expiry {batch.expiryDate} · {formatNumber(batch.quantityAvailable)} available</option>)}</select>{!row.eligible.length ? <small className="mt-1 block font-semibold text-red-600">No non-expired stock is available for this product.</small> : null}</label></div>{row.batchId === "AUTO" && automatic.length ? <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 p-3"><span className="text-[10px] font-bold uppercase text-cyan-800">Automatic FIFO plan</span><div className="mt-2 flex flex-wrap gap-2">{automatic.map(({ batch, quantity }) => <span className="rounded bg-white px-2 py-1 text-xs font-semibold text-slate-700" key={batch.id}>{formatNumber(quantity)} · Lot {batch.lotNumber} · exp {batch.expiryDate}</span>)}</div>{remaining.gt(0) ? <small className="mt-2 block font-semibold text-red-700">Short by {formatNumber(remaining.toFixed(4))} units.</small> : null}</div> : null}</fieldset>;
+      })}</div> : null}
       <div className="grid gap-4 sm:grid-cols-2"><label><span className={labelClass}>Delivery Remarks</span><textarea className={textareaClass} value={remarks} onChange={(event) => setRemarks(event.target.value)} /></label><label><span className={labelClass}>FIFO Override Reason</span><textarea className={textareaClass} value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} disabled={!canOverride} placeholder={canOverride ? "Required only when a newer batch is selected" : "This role cannot override FIFO"} /></label></div>
       <div className="flex justify-end"><Button type="submit" variant="primary" icon={<Truck className="h-4 w-4" />} disabled={busy || !order}>Validate FIFO & Dispatch</Button></div>
     </form>

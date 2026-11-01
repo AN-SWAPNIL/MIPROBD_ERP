@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Pencil, Plus, Save, Archive, Printer, Settings } from "lucide-react";
+import { Pencil, Plus, Save, Archive, Printer, Settings, FileSpreadsheet, ShieldCheck } from "lucide-react";
 import Button from "../../components/ui/Button";
 import PageHeader from "../../components/ui/PageHeader";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
@@ -9,7 +9,7 @@ import { ErrorBlock, LoadingBlock, Modal, ProductThumb, TableFrame, inputClass, 
 import type { CashBankAccount, Product, Supplier } from "../../domains/erp.types";
 import { settingsService } from "../../domains/services";
 import { useAuthStore } from "../../lib/auth/session";
-import { hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
+import { hasCapability, hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
 import { useToastStore } from "../../lib/ui/toast";
 
 type MasterKind = "products" | "suppliers" | "accounts";
@@ -37,6 +37,8 @@ export default function BackendMastersPage() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: [view] });
       void client.invalidateQueries({ queryKey: ["sales", "payment-accounts"] });
+      void client.invalidateQueries({ queryKey: ["sales", "lookup"] });
+      void client.invalidateQueries({ queryKey: ["sales", "page"] });
       setEditing(null); setArchiving(null);
       toast({ kind: "success", title: "Master record saved" });
     },
@@ -51,7 +53,13 @@ export default function BackendMastersPage() {
     operation.mutate(() => view === "products" ? editing === "new" ? settingsService.createProduct(data as Partial<Product>) : settingsService.updateProduct(editing.id, data as Partial<Product>) : view === "suppliers" ? editing === "new" ? settingsService.createSupplier(data as Partial<Supplier>) : settingsService.updateSupplier(editing.id, data as Partial<Supplier>) : editing === "new" ? settingsService.createAccount(data as Partial<CashBankAccount>) : settingsService.updateAccount(editing.id, data as Partial<CashBankAccount>));
   };
   return <>
-    <PageHeader title="Master Data" subtitle="Products, suppliers and cash/bank accounts" actions={hasEffectivePermission(user, "settings") ? <><Button icon={<Settings className="h-4 w-4" />} onClick={() => navigate("/backend/settings/operations")}>Operational Settings</Button><Button icon={<Printer className="h-4 w-4" />} onClick={() => navigate("/backend/settings/print")}>Company Stationery</Button></> : undefined} />
+    <PageHeader title="Master Data" subtitle="Products, suppliers and cash/bank accounts" actions={hasEffectivePermission(user, "settings") ? <>
+      {user?.role === "Super Admin" ? <Button icon={<ShieldCheck className="h-4 w-4" />} onClick={() => navigate("/backend/settings/launch")}>Launch Checks</Button> : null}
+      {hasCapability(user, "view_sensitive_cost") && ["Super Admin", "Accounts", "Managing Director"].includes(user?.role ?? "") ? <Button icon={<FileSpreadsheet className="h-4 w-4" />} onClick={() => navigate("/backend/settings/opening")}>Opening Data</Button> : null}
+      {user?.role === "Super Admin" ? <Button icon={<ShieldCheck className="h-4 w-4" />} onClick={() => navigate("/backend/settings/approvals")}>Approval Policies</Button> : null}
+      <Button icon={<Settings className="h-4 w-4" />} onClick={() => navigate("/backend/settings/operations")}>Operational Settings</Button>
+      <Button icon={<Printer className="h-4 w-4" />} onClick={() => navigate("/backend/settings/print")}>Company Stationery</Button>
+    </> : undefined} />
     <div className="my-4 flex flex-wrap items-center gap-2">
       {(["products", "suppliers", "accounts"] as const).filter((area) => area === "accounts" ? accountAccess : hasEffectivePermission(user, area)).map((area) => <Button key={area} variant={view === area ? "primary" : "secondary"} onClick={() => { setView(area); setSearch(""); }}>{area === "products" ? "Products" : area === "suppliers" ? "Suppliers" : "Cash & Bank"}</Button>)}
       <label className="order-last w-full basis-full sm:order-none sm:ml-auto sm:min-w-48 sm:max-w-xs sm:flex-1 sm:basis-auto"><span className="sr-only">Search master records</span><input className={inputClass} placeholder="Search name or reference" value={search} onChange={(event) => setSearch(event.target.value)} /></label>

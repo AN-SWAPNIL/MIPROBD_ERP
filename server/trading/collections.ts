@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
-import { accountTransactions, cashAccounts, collectionAllocations, collections, customerEntries, postingKeys, salesInvoices } from "../../database/schema.js";
+import { accountTransactions, cashAccounts, collectionAllocations, collections, customerEntries, openingPositions, postingKeys, salesInvoices } from "../../database/schema.js";
 import { audit, identity, type Context } from "../foundation/context.js";
 import { assertAllowed, HttpError } from "../foundation/errors.js";
 import { hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
@@ -39,10 +39,12 @@ export function createCollectionRouter(ctx: Context) {
       }
       const [current] = await readCustomers(tx, user, customer.id);
       if (!current || new D(input.amount).gt(current.currentDue)) throw new HttpError(409, "Collection cannot exceed current customer due.");
-      const entries = await tx.select({ entry: customerEntries, invoice: salesInvoices }).from(customerEntries).leftJoin(salesInvoices, eq(customerEntries.invoiceId, salesInvoices.id))
+      const entries = await tx.select({ entry: customerEntries, invoice: salesInvoices, opening: openingPositions }).from(customerEntries).leftJoin(salesInvoices, eq(customerEntries.invoiceId, salesInvoices.id)).leftJoin(openingPositions, eq(customerEntries.openingPositionId, openingPositions.id))
         .where(and(eq(customerEntries.customerId, customer.id), inArray(customerEntries.type, ["Invoice", "Opening Due"]), lte(customerEntries.date, input.date), input.invoiceId ? eq(customerEntries.invoiceId, input.invoiceId) : undefined, orderId ? eq(customerEntries.orderId, orderId) : undefined));
-      const paid = entries.length ? await tx.select({ id: collectionAllocations.receivableEntryId, amount: sql<string>`sum(${collectionAllocations.amount})::text` }).from(collectionAllocations).innerJoin(collections, eq(collectionAllocations.collectionId, collections.id)).where(and(inArray(collectionAllocations.receivableEntryId, entries.map(({ entry }) => entry.id)), eq(collections.status, "Posted"))).groupBy(collectionAllocations.receivableEntryId) : [];
-      const eligible = entries.filter(({ entry, invoice }) => entry.type === "Opening Due" || invoice?.status === "Approved").filter(({ invoice }) => user.role !== "Sales Executive" || !invoice || invoice.ownerId === user.id).map(({ entry }) => ({ id: entry.id, date: entry.date, outstanding: new D(entry.debit).minus(paid.find((row) => row.id === entry.id)?.amount ?? "0").toFixed(2) }));
+      const openingBalances=(await tx.execute<{id:string;due:string}>(sql`select id,erp_private.opening_receivable_due(id)::text due from erp_private.customer_entries where customer_id=${customer.id} and type='Opening Due' and opening_position_id is not null`)).rows;
+      const legacyPaid=entries.some(({entry})=>entry.type==="Opening Due"&&!entry.openingPositionId)?await tx.select({id:collectionAllocations.receivableEntryId,amount:sql<string>`sum(${collectionAllocations.amount})::text`}).from(collectionAllocations).innerJoin(collections,eq(collectionAllocations.collectionId,collections.id)).where(and(inArray(collectionAllocations.receivableEntryId,entries.map(({entry})=>entry.id)),eq(collections.status,"Posted"))).groupBy(collectionAllocations.receivableEntryId):[];
+      const invoiceBalances=entries.some(({entry})=>entry.invoiceId)?(await tx.execute<{id:string;due:string}>(sql`select invoice_id id,sum(debit-credit)::text due from erp_private.customer_entries where customer_id=${customer.id} and date<=${input.date}::date and invoice_id is not null group by invoice_id`)).rows:[];
+      const eligible = entries.filter(({ entry, invoice }) => entry.type === "Opening Due" || invoice?.status === "Approved").filter(({ invoice }) => user.role !== "Sales Executive" || !invoice || invoice.ownerId === user.id).map(({ entry, opening }) => ({ id: entry.id, date: opening?.snapshot.originalDocumentDate || entry.date, outstanding: entry.invoiceId?invoiceBalances.find((r)=>r.id===entry.invoiceId)?.due??"0":entry.openingPositionId?openingBalances.find(r=>r.id===entry.id)?.due??"0":new D(entry.debit).minus(legacyPaid.find(r=>r.id===entry.id)?.amount??"0").toFixed(2) }));
       let allocations;
       try { allocations = allocateOutstanding(input.amount, eligible); } catch (error) { throw new HttpError(409, (error as Error).message); }
       const allocationOrders = [...new Set(allocations.map((allocation) => entries.find(({ entry }) => entry.id === allocation.entryId)!.entry.orderId).filter((id): id is string => Boolean(id)))];

@@ -1,9 +1,10 @@
+import { openWorkspace } from "./workspace-browser.js";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
 import { chromium } from "@playwright/test";
 
-export async function printBackendBrowserSmoke(apiBase: string, email: string, password: string, records: [string, string, string][]) {
+export async function printBackendBrowserSmoke(apiBase: string, email: string, password: string, records: [string, string, string][], options: { readOnly?: boolean } = {}) {
   process.env.VITE_BACKEND_MODE = "foundation"; process.env.VITE_DEMO_MODE = "false";
   const origin = process.env.APP_URL ?? "http://localhost:5193";
   if (new URL(origin).hostname !== "localhost") throw new Error("Use a local development origin.");
@@ -24,12 +25,14 @@ export async function printBackendBrowserSmoke(apiBase: string, email: string, p
       await page.goto(`${origin}/login`, { waitUntil: "domcontentloaded" });
       await page.getByLabel("Email", { exact: true }).fill(email); await page.getByLabel("Password", { exact: true }).fill(password);
       await page.getByRole("button", { name: "Sign In", exact: true }).click(); await page.waitForURL("**/backend");
-      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await openWorkspace(page, "Settings");
       await page.getByRole("button", { name: "Company Stationery", exact: true }).click();
       await page.getByRole("button", { name: "Save Stationery", exact: true }).waitFor();
       await capture("settings");
-      const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/settings/print" && response.request().method() === "PATCH");
-      await page.getByRole("button", { name: "Save Stationery", exact: true }).click(); assert.equal((await saved).status(), 200);
+      if (!options.readOnly) {
+        const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/settings/print" && response.request().method() === "PATCH");
+        await page.getByRole("button", { name: "Save Stationery", exact: true }).click(); assert.equal((await saved).status(), 200);
+      }
       for (const [type, id, amount] of records) {
         await page.goto(`${origin}/backend/print/${type}/${id}`, { waitUntil: "domcontentloaded" });
         await page.getByRole("button", { name: "Print / Save PDF", exact: true }).waitFor();
@@ -53,6 +56,7 @@ export async function printBackendBrowserSmoke(apiBase: string, email: string, p
           await page.screenshot({ path: `artifacts/backend/print-${type}-paper.png`, fullPage: true });
         }
         await page.emulateMedia({ media: "screen" });
+        await page.waitForTimeout(300);
         await page.getByRole("tab", { name: "Without Background", exact: true }).click();
         assert.equal(await sheet.first().getAttribute("data-letterhead-mode"), "preprinted");
         assert.equal(await sheet.first().evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).backgroundImage), "none");

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Mail, Pencil, Plus, Search, ShieldCheck, UserRound } from "lucide-react";
+import { Activity, Mail, Pencil, Plus, Search, ShieldCheck, UserRound,WalletCards } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../../components/ui/Button";
 import PageHeader from "../../components/ui/PageHeader";
 import StatusBadge from "../../components/ui/StatusBadge";
@@ -16,8 +16,10 @@ import PersistentMarketingHub from "../marketing/PersistentMarketingHub";
 import { WorkforcePager } from "../marketing/WorkforceUi";
 import { workforceService as api } from "../marketing/workforceService";
 import { EmployeeAccessForm, EmployeeProfileForm, InviteEmployeeForm } from "./WorkforceEmployeeForms";
+import { canReadPayroll } from "../ledger/access";
 
 export default function PersistentEmployeesPage() {
+  const navigate = useNavigate();
   const actor=useAuthStore((s)=>s.session!.user);const client=useQueryClient();const toast=useToastStore((s)=>s.push);const [params,setParams]=useSearchParams();
   const [search,setSearch]=useState("");const [debounced,setDebounced]=useState("");const [status,setStatus]=useState("");const [page,setPage]=useState(1);
   const [dialog,setDialog]=useState<{kind:"invite"}|{kind:"profile"|"access";employee:EmployeeRef}|null>(null);
@@ -29,8 +31,8 @@ export default function PersistentEmployeesPage() {
   const execute=(run:()=>Promise<unknown>,message:string)=>action.mutate({run,message});
   const editable=(e:EmployeeRef)=>e.id!==actor.id&&canManageEmployees(actor,"edit")&&(actor.role==="Super Admin"||e.role!=="Super Admin"&&roleRank[actor.role]>roleRank[e.role]);
   const actions=(e:EmployeeRef)=><div className="flex flex-wrap gap-1">{editable(e)?<Button variant="ghost" icon={<Pencil className="h-4 w-4" />} title={`Edit ${e.name}`} aria-label={`Edit ${e.name}`} onClick={()=>setDialog({kind:"profile",employee:e})} />:null}{editable(e)&&canManageUserAccess(actor)?<Button variant="ghost" icon={<ShieldCheck className="h-4 w-4" />} title={`Access for ${e.name}`} aria-label={`Access for ${e.name}`} onClick={()=>setDialog({kind:"access",employee:e})} />:null}{e.status==="Pending"&&canManageEmployees(actor,"create")?<Button variant="ghost" icon={<Mail className="h-4 w-4" />} title={`Retry invitation for ${e.name}`} aria-label={`Retry invitation for ${e.name}`} disabled={action.isPending} onClick={()=>execute(()=>api.retryInvite(e.id),"Invitation processed")} />:null}{activityAllowed?<Button variant="ghost" icon={<Activity className="h-4 w-4" />} title={`Activity for ${e.name}`} aria-label={`Activity for ${e.name}`} onClick={()=>setParams({view:"activity",employee:e.id})} />:null}</div>;
-  return <div className="grid min-w-0 gap-5" data-testid="persistent-employees"><PageHeader eyebrow="People" title="Employees" subtitle="Employee directory, assigned teams and controlled account access." actions={canManageEmployees(actor,"create")&&roles.some((role)=>canAssignRole(actor,role))?<Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={()=>setDialog({kind:"invite"})}>Invite Employee</Button>:null} />
-    <Segmented value={view} ariaLabel="Employee views" onChange={(v)=>setParams({view:v})} options={[{value:"directory",label:"Employee Directory"},...(activityAllowed?[{value:"activity",label:"Team Activity"}]:[])]} />
+  return <div className="grid min-w-0 gap-5" data-testid="persistent-employees"><PageHeader eyebrow="People" title="Employees" subtitle="Employee directory, assigned teams and controlled account access." actions={<>{canReadPayroll(actor)?<Button icon={<WalletCards className="h-4 w-4"/>} onClick={()=>navigate("/backend/payroll")}>Payroll & Commission</Button>:null}{canManageEmployees(actor,"create")&&roles.some((role)=>canAssignRole(actor,role))?<Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={()=>setDialog({kind:"invite"})}>Invite Employee</Button>:null}</>} />
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3"><Segmented value={view} ariaLabel="Employee views" onChange={(v)=>setParams({view:v})} options={[{value:"directory",label:"Employee Directory"},...(activityAllowed?[{value:"activity",label:"Team Activity"}]:[])]} />{canManageEmployees(actor,"create")?<Button icon={<Mail className="h-4 w-4" />} onClick={()=>navigate("/backend/employees/invitations")}>Invitation Delivery</Button>:null}</div>
     {view==="activity"?<PersistentMarketingHub key={params.get("employee")??"all"} managed employeeId={params.get("employee")??undefined} />:<Panel title="Employee Directory" subtitle={hasEffectivePermission(actor,"users")?"Current company profiles":"Your assigned reporting hierarchy"}>
       <div className="grid gap-3 border-b border-blue-100 p-4 sm:grid-cols-[1fr_200px]"><label className="relative min-w-0"><span className="sr-only">Search employees</span><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" /><input className={`${inputClass} pl-9`} placeholder="Search name, employee ID, designation..." value={search} onChange={(e)=>setSearch(e.target.value)} /></label><label><span className="sr-only">Employee status</span><select aria-label="Employee status" className={inputClass} value={status} onChange={(e)=>{setStatus(e.target.value);setPage(1);}}><option value="">All statuses</option>{["Active","Pending","Inactive"].map((s)=><option key={s}>{s}</option>)}</select></label></div>
       {query.isPending?<LoadingBlock label="Loading employee profiles" />:null}{query.isError?<ErrorBlock error={query.error} />:null}

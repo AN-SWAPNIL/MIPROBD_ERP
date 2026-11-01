@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Printer, Ruler, Stamp } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Decimal } from "decimal.js";
 import { foundationMode } from "../../lib/runtime";
@@ -37,6 +37,8 @@ import { LetterheadSheet, letterheadModeOptions, printModeFromConfiguration, typ
 import TransactionPrintSheets from "./TransactionPrintSheets";
 import PersistentReportContent from "./PersistentReportContent";
 import type { PersistentReport, PersistentReportQuery } from "../reports/persistentContracts";
+import { PersistentReportSchema } from "../reports/persistentContracts";
+import { apiRequest } from "../../lib/api/client";
 import {
   auditEventsReportTable,
   buildEmployeeLetterheadPages,
@@ -79,11 +81,14 @@ export default function PrintPage() {
   const [mode, setMode] = useState<LetterheadMode | "">("");
   const [identityId, setIdentityId] = useState("");
   const [printReady, setPrintReady] = useState(false);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
   const queryString = searchParams.toString();
   const configQuery = useQuery({ queryKey: ["print", "configuration"], queryFn: printService.configuration });
   const recordQuery = useQuery({
     queryKey: ["print", documentType, id, queryString, user?.id],
     queryFn: async (): Promise<PrintPayload> => {
+      if(foundationMode&&documentType==="payslip")return{kind:"persistent-report",report:PersistentReportSchema.parse((await apiRequest(`/api/payroll/slips/${encodeURIComponent(id)}/print`)).data)};
       if (foundationMode) return documentType === "report" ? { kind: "persistent-report", report: await reportService.print(id, Object.fromEntries(searchParams) as PersistentReportQuery) } : printService.record(documentType, id);
       if (documentType === "quotation") return { kind: "quotation", record: find(await salesService.quotations(), id) };
       if (documentType === "order") return { kind: "order", record: find(await salesService.orders(), id) };
@@ -136,6 +141,16 @@ export default function PrintPage() {
   const payload = recordQuery.data;
   const identity = config?.identities.find((entry) => entry.id === (identityId || config.defaultIdentityId)) ?? config?.identities[0];
   const presentation = useMemo(() => payload && user && identity ? buildPresentation(payload, searchParams, user, role, identity) : null, [payload, searchParams, user, role, identity]);
+  const hasPresentation = Boolean(presentation);
+  useLayoutEffect(() => {
+    const element = previewRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) setPreviewZoom(Math.min(1, entry.contentRect.width / (210 * 96 / 25.4)));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasPresentation]);
   if (configQuery.isLoading || recordQuery.isLoading) return <LoadingBlock label="Preparing calibrated A4 print view" />;
   if (configQuery.isError || recordQuery.isError || !payload || !config || !identity || !user || !presentation) return <ErrorBlock error={configQuery.error ?? recordQuery.error ?? new Error("Your session is unavailable. Sign in again before printing.")} />;
   const effectiveMode = printModeFromConfiguration(config, mode);
@@ -151,7 +166,7 @@ export default function PrintPage() {
         <Button variant="primary" disabled={foundationMode && !printReady} icon={<Printer className="h-4 w-4" />} onClick={() => window.print()}>Print / Save PDF</Button>
       </div>
 
-      <div className="print-preview grid gap-4 overflow-x-auto rounded-md bg-slate-200 p-3 sm:p-6">
+      <div ref={previewRef} style={{ "--print-preview-zoom": previewZoom } as CSSProperties} className="print-preview grid gap-4 overflow-x-auto rounded-md bg-slate-200 p-3 sm:p-6">
         {foundationMode ? <TransactionPrintSheets identity={identity} mode={effectiveMode} title={presentation.title} subtitle={presentation.subtitle} reference={presentation.reference} date={presentation.date} reportLayout={payload.kind === "persistent-report"} onReady={setPrintReady}>{presentation.content}</TransactionPrintSheets> : (presentation.pages ?? [presentation.content]).map((page, index, pages) => <LetterheadSheet
           identity={identity}
           mode={effectiveMode}
@@ -185,7 +200,7 @@ function requiredPeriod(params: URLSearchParams) {
 }
 
 function buildPresentation(payload: PrintPayload, params: URLSearchParams, user: User, role: Role, identity: PrintIdentity): PrintPresentation {
-  if (payload.kind === "persistent-report") return { title: payload.report.title.toUpperCase(), subtitle: `${role} | ${payload.report.grouping}`, reference: `RPT-${payload.report.to.replaceAll("-", "")}`, date: `${payload.report.from} to ${payload.report.to}`, content: <PersistentReportContent report={payload.report} /> };
+  if (payload.kind === "persistent-report") return { title: payload.report.title.toUpperCase(), subtitle: payload.report.id === "payroll-payslip" ? `Salary Month ${payload.report.filters["Salary Month"]}` : `${role} | ${payload.report.grouping}`, reference: payload.report.id === "payroll-payslip" ? payload.report.filters.Payroll : `RPT-${payload.report.to.replaceAll("-", "")}`, date: `${payload.report.from} to ${payload.report.to}`, content: <PersistentReportContent report={payload.report} /> };
   if (payload.kind === "quotation") return { title: "QUOTATION", subtitle: payload.record.status, reference: payload.record.quotationNumber, date: payload.record.date, content: <QuotationDocument record={payload.record} /> };
   if (payload.kind === "order") return { title: "ORDER RECEIVING SHEET", subtitle: payload.record.status, reference: payload.record.orderNumber, date: payload.record.date, content: <OrderReceivingSheet record={payload.record} identity={identity} /> };
   if (payload.kind === "challan") return { title: "DELIVERY CHALLAN", reference: payload.record.challanNumber, date: payload.record.date, content: <ChallanDocument record={payload.record} financialVisible={payload.financialVisible !== false} /> };

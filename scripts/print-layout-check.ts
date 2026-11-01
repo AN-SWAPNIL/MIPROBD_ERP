@@ -10,7 +10,7 @@ async function main() {
     const admin = await h.employee("Super Admin");
     const [quote] = await h.ctx.db.select({ id: quotations.id }).from(quotations).where(and(sql`${quotations.snapshot}->>'customerName' like 'DEV TEST Print Hospital %'`, eq(quotations.total, "3.69"))).orderBy(desc(quotations.createdAt)).limit(1);
     if (!quote) throw new Error("Run hosted print acceptance first; this check only reuses its labelled TEST quotations.");
-    await printBackendBrowserSmoke(h.bases[0], admin.email, h.password, [["quotation", quote.id, "3.69"]]);
+    await printBackendBrowserSmoke(h.bases[0], admin.email, h.password, [["quotation", quote.id, "3.69"]], { readOnly: true });
   } finally { await h.close(); }
 }
 

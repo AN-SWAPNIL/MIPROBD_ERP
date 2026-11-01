@@ -18,6 +18,7 @@ const table: ReportTable = {
     { order: "SO-003", customer: "Labaid", salesperson: "Shamima", status: "Open" }
   ]
 };
+test("supplier claim filters round-trip and isolate one source document",()=>{const filters={supplierClaim:"claim-1"};const params=new URLSearchParams();appendReportFilters(params,filters);assert.deepEqual(readReportFilters(params),filters);const report:ReportTable={id:"supplier-claims",title:"Claims",columns:[{key:"supplierClaim",label:"Claim"}],rows:[{supplierClaim:"claim-1"},{supplierClaim:"claim-2"}]};assert.equal(filterReportRows(report,filters).length,1);});
 
 test("report filters combine dimensions without changing source rows", () => {
   const filtered = filterReportRows(table, { customer: "Labaid", salesperson: "Rafiq", status: "Open" });

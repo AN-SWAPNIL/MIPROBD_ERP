@@ -13,31 +13,31 @@ async function customerHistory(tx: Transaction, user: User, id?: string) {
   return true;
 }
 
-export async function readDeliveries(tx: Transaction, user: User, filters: { id?: string; orderId?: string; customerId?: string } = {}): Promise<Delivery[]> {
+export async function readDeliveries(tx: Transaction, user: User, filters: { id?: string; ids?: string[]; orderId?: string; customerId?: string } = {}): Promise<Delivery[]> {
   const history = await customerHistory(tx, user, filters.customerId);
-  const rows = await tx.select().from(deliveries).where(and(filters.id ? eq(deliveries.id, filters.id) : undefined, filters.orderId ? eq(deliveries.orderId, filters.orderId) : undefined, filters.customerId ? eq(deliveries.customerId, filters.customerId) : undefined, user.role === "Sales Executive" && !history ? eq(deliveries.ownerId, user.id) : undefined)).orderBy(deliveries.date, deliveries.id);
+  const rows = await tx.select().from(deliveries).where(and(filters.ids ? inArray(deliveries.id, filters.ids) : undefined, filters.id ? eq(deliveries.id, filters.id) : undefined, filters.orderId ? eq(deliveries.orderId, filters.orderId) : undefined, filters.customerId ? eq(deliveries.customerId, filters.customerId) : undefined, user.role === "Sales Executive" && !history ? eq(deliveries.ownerId, user.id) : undefined)).orderBy(deliveries.date, deliveries.id);
   if (!rows.length) return [];
   const lines = await tx.select().from(deliveryLines).where(inArray(deliveryLines.deliveryId, rows.map((row) => row.id))).orderBy(deliveryLines.position);
   return rows.map((row) => ({ id: row.id, challanNumber: row.challanNumber, orderId: row.orderId, customerId: row.customerId, customerName: row.customerName, salesOwnerId: row.ownerId, dispatchedByUserId: row.dispatchedBy, postedAt: row.postedAt.toISOString(), date: row.date, remarks: row.remarks, receiverName: row.receiverName, overrideReason: row.overrideReason || undefined, status: "Dispatched", lines: lines.filter((line) => line.deliveryId === row.id).map((line) => ({ id: line.id, productId: line.productId, productCode: line.productCode, productName: line.productName, quantity: line.quantity, unitPrice: line.unitPrice, discount: line.discount, lineTotal: line.lineTotal, batchId: line.batchId, batchNumber: line.batchNumber })) }));
 }
 
-export async function readInvoices(tx: Transaction, user: User, filters: { id?: string; orderId?: string; customerId?: string } = {}): Promise<(SalesInvoice & { version: number })[]> {
+export async function readInvoices(tx: Transaction, user: User, filters: { id?: string; ids?: string[]; orderId?: string; customerId?: string } = {}): Promise<(SalesInvoice & { version: number })[]> {
   const history = await customerHistory(tx, user, filters.customerId);
-  const rows = await tx.select().from(salesInvoices).where(and(filters.id ? eq(salesInvoices.id, filters.id) : undefined, filters.orderId ? eq(salesInvoices.orderId, filters.orderId) : undefined, filters.customerId ? eq(salesInvoices.customerId, filters.customerId) : undefined, user.role === "Sales Executive" && !history ? eq(salesInvoices.ownerId, user.id) : undefined)).orderBy(salesInvoices.date, salesInvoices.id);
+  const rows = await tx.select().from(salesInvoices).where(and(filters.ids ? inArray(salesInvoices.id, filters.ids) : undefined, filters.id ? eq(salesInvoices.id, filters.id) : undefined, filters.orderId ? eq(salesInvoices.orderId, filters.orderId) : undefined, filters.customerId ? eq(salesInvoices.customerId, filters.customerId) : undefined, user.role === "Sales Executive" && !history ? eq(salesInvoices.ownerId, user.id) : undefined)).orderBy(salesInvoices.date, salesInvoices.id);
   if (!rows.length) return [];
   const ids = rows.map((row) => row.id);
   const lines = await tx.select().from(invoiceLines).where(inArray(invoiceLines.invoiceId, ids)).orderBy(invoiceLines.position);
   const links = await tx.select().from(invoiceDeliveries).where(inArray(invoiceDeliveries.invoiceId, ids));
-  return rows.map((row) => ({ ...row.snapshot, id: row.id, invoiceNumber: row.invoiceNumber, orderId: row.orderId, customerId: row.customerId, ownerId: row.ownerId, date: row.date, createdAt: row.createdAt.toISOString(), approvedAt: row.approvedAt?.toISOString(), approvedByUserId: row.approvedBy ?? undefined, status: row.status, remarks: row.remarks, cancellationReason: row.cancellationReason ?? undefined, subtotal: row.subtotal, discountTotal: row.discountTotal, total: row.total, version: row.version, deliveryIds: links.filter((link) => link.invoiceId === row.id).map((link) => link.deliveryId), lines: lines.filter((line) => line.invoiceId === row.id).map(({ invoiceId: _parent, deliveryLineId: _source, position: _position, ...line }) => { void _parent; void _source; void _position; return line; }) }));
+  return rows.map((row) => ({ ...row.snapshot, id: row.id, invoiceNumber: row.invoiceNumber, orderId: row.orderId, customerId: row.customerId, ownerId: row.ownerId, date: row.date, createdAt: row.createdAt.toISOString(), approvedAt: row.approvedAt?.toISOString(), approvedByUserId: row.approvedBy ?? undefined, status: row.status, remarks: row.remarks, cancellationReason: row.cancellationReason ?? undefined, subtotal: row.subtotal, discountTotal: row.discountTotal, total: row.total, version: row.version, deliveryIds: links.filter((link) => link.invoiceId === row.id).map((link) => link.deliveryId), lines: lines.filter((line) => line.invoiceId === row.id).map(({ invoiceId: _parent, deliveryLineId: _source, position: _position, costBdt:_cost, refusalLineIds:_refused, ...line }) => { void _parent; void _source; void _position; void _cost; void _refused; return line; }) }));
 }
 
-export async function readCollections(tx: Transaction, user: User, filters: { id?: string; customerId?: string; orderId?: string } = {}): Promise<Collection[]> {
+export async function readCollections(tx: Transaction, user: User, filters: { id?: string; ids?: string[]; customerId?: string; orderId?: string } = {}): Promise<Collection[]> {
   const history = await customerHistory(tx, user, filters.customerId);
   if (user.role === "Sales Executive" && filters.orderId) {
     const [order] = await tx.select({ ownerId: salesOrders.ownerId }).from(salesOrders).where(eq(salesOrders.id, filters.orderId));
     assertAllowed(order?.ownerId === user.id, "This order receipt allocation is outside your assigned records.");
   }
-  const rows = await tx.select().from(collections).where(and(filters.id ? eq(collections.id, filters.id) : undefined, filters.customerId ? eq(collections.customerId, filters.customerId) : undefined, user.role === "Sales Executive" && !history && !filters.orderId ? eq(collections.ownerId, user.id) : undefined)).orderBy(collections.date, collections.id);
+  const rows = await tx.select().from(collections).where(and(filters.ids ? inArray(collections.id, filters.ids) : undefined, filters.id ? eq(collections.id, filters.id) : undefined, filters.customerId ? eq(collections.customerId, filters.customerId) : undefined, user.role === "Sales Executive" && !history && !filters.orderId ? eq(collections.ownerId, user.id) : undefined)).orderBy(collections.date, collections.id);
   if (!rows.length) return [];
   const allocations = await tx.select({ allocation: collectionAllocations, entry: customerEntries }).from(collectionAllocations).innerJoin(customerEntries, eq(collectionAllocations.receivableEntryId, customerEntries.id)).where(inArray(collectionAllocations.collectionId, rows.map((row) => row.id)));
   return rows.flatMap((row) => {

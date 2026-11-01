@@ -15,6 +15,7 @@ import { checkVersion } from "./records.js";
 import { accountBalance, readAccounts, readAccountTransactions } from "./posting-records.js";
 import { D, money } from "./money.js";
 import { decimalInput } from "../operations/contracts.js";
+import { recordAccountLedger } from "../ledger/service.js";
 
 export async function postAccountEntry(tx: Transaction, user: User, entry: Omit<typeof accountTransactions.$inferInsert, "id" | "accountName" | "voucherNumber" | "createdByUserId" | "createdByName" | "createdAt">, allowInactive = false) {
   const [account] = await tx.select().from(cashAccounts).where(eq(cashAccounts.id, entry.accountId)).for("update");
@@ -29,6 +30,7 @@ export async function postAccountEntry(tx: Transaction, user: User, entry: Omit<
   if (next.gte("1e22")) throw new HttpError(422, "Account balance exceeds supported precision.");
   const id = newId("account-transaction"); const voucherNumber = await nextNumber(tx, entry.direction === "In" ? "CV" : "DV", entry.date);
   await tx.insert(accountTransactions).values({ ...entry, amount: money(amount), id, voucherNumber, accountName: account.name, createdByUserId: user.id, createdByName: user.name });
+  await recordAccountLedger(tx, user, { ...entry, id, voucherNumber, amount: money(amount) });
   return id;
 }
 

@@ -9,7 +9,7 @@ import { activeOwner, assertEmployeeScope, canonicalProducts, canonicalSubject }
 import { completeInput, followUpInput, followUpUpdate, listInput, planInput, reasonInput, reviewInput, ruleInput, targetInput } from "./contracts.js";
 import { followUpBase, paged, planBase, targetBase } from "./records.js";
 import { checkVersion, pathId, postOnce, workforceWrite } from "./common.js";
-import { hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
+import { hasEffectivePermission, isSuperAdmin } from "../../src/lib/permissions/effectiveAccess.js";
 
 export function createPlanningRouter(ctx:Context) {
   const router=Router();
@@ -65,9 +65,9 @@ export function createPlanningRouter(ctx:Context) {
     const input=reviewInput.parse(req.body); const id=pathId(req);
     await postOnce(ctx,req,res,"approve",input,async(tx,user)=>{
       const [row]=await tx.select().from(marketingPlans).where(eq(marketingPlans.id,id)).for("update"); if(!row)throw new HttpError(404,"Plan not found."); await assertEmployeeScope(tx,user,row.employeeId); checkVersion(row.version,input.version);
-      assertAllowed(row.employeeId!==user.id,"A plan requires an independent reviewer.");
+      assertAllowed(isSuperAdmin(user)||row.employeeId!==user.id,"Delegated employees cannot review their own plans.");
       if(row.status!=="Submitted")throw new HttpError(409,"Only submitted plans can be reviewed.");
-      await tx.update(marketingPlans).set({status:input.status,reviewedBy:user.id,reviewReason:input.reason,version:row.version+1,updatedAt:new Date()}).where(eq(marketingPlans.id,id)); await audit(tx,user.id,`Marketing plan ${input.status}`,"MarketingPlan",id,{reason:input.reason});return id;
+      await tx.update(marketingPlans).set({status:input.status,reviewedBy:user.id,reviewReason:input.reason,version:row.version+1,updatedAt:new Date()}).where(eq(marketingPlans.id,id)); await audit(tx,user.id,`Marketing plan ${input.status}`,"MarketingPlan",id,{reason:input.reason,superAdminAuthority:isSuperAdmin(user),selfReview:row.employeeId===user.id});return id;
     });res.json({success:true,data:{id},message:"Plan review recorded"});
   });
   router.post("/workforce/targets",async(req,res)=>{

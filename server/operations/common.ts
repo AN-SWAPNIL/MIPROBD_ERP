@@ -10,11 +10,16 @@ import { assertAllowed, HttpError } from "../foundation/errors.js";
 import { digest, toUser, type Identity } from "../foundation/context.js";
 
 export const newId = (prefix: string) => `${prefix}-${randomUUID()}`;
-export async function lockActor(tx: Transaction, actor: Identity, area: PermissionKey, action: PermissionAction, capability?: Capability) {
+export async function lockSessionActor(tx: Transaction, actor: Identity) {
   const [row] = await tx.select({ employee: employees }).from(employees).innerJoin(sessions, eq(sessions.employeeId, employees.id))
     .where(and(eq(employees.id, actor.user.id), eq(sessions.id, actor.sessionId), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date()))).for("share");
   if (!row) throw new HttpError(401, "This session is no longer active.");
   const user = toUser(row.employee);
+  assertAllowed(user.status === "Active");
+  return user;
+}
+export async function lockActor(tx: Transaction, actor: Identity, area: PermissionKey, action: PermissionAction, capability?: Capability) {
+  const user = await lockSessionActor(tx, actor);
   assertAllowed(hasEffectivePermission(user, area, action) && (!capability || hasCapability(user, capability)));
   return user;
 }

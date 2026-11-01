@@ -1,3 +1,4 @@
+import { openWorkspace, signOutWorkspace } from "./workspace-browser.js";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
@@ -25,7 +26,7 @@ export async function backendBrowserSmoke(apiBase: string, email: string, passwo
       await page.getByTestId("persistent-dashboard").waitFor();
       assert.equal(await page.locator("body").evaluate((body) => body.scrollWidth <= body.clientWidth + 2), true);
       await page.screenshot({ path: `artifacts/backend/foundation-${name}.png`, fullPage: true });
-      await page.getByRole("link", { name: "Profile & Security", exact: true }).click();
+      await openWorkspace(page, "Profile & Security");
       await page.getByRole("heading", { name: "Profile & Security Settings" }).waitFor();
       await page.getByLabel("Full Name", { exact: true }).fill(`Backend Browser ${name}`);
       await page.getByRole("button", { name: "Save Profile", exact: true }).click();
@@ -35,7 +36,7 @@ export async function backendBrowserSmoke(apiBase: string, email: string, passwo
       assert.equal(await page.getByLabel("Full Name", { exact: true }).inputValue(), `Backend Browser ${name}`);
       await page.screenshot({ path: `artifacts/backend/profile-${name}.png`, fullPage: true });
       assert.deepEqual(errors, []);
-      await page.getByRole("button", { name: "Sign out", exact: true }).click();
+      await signOutWorkspace(page);
       await page.waitForURL("**/login");
       await page.close();
     }

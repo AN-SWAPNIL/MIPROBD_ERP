@@ -1,7 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AppLayout from "./components/layout/AppLayout";
-import { ProtectedRoute, RequireAnyPermission, RequireEmployeeHubAccess, RequirePermission, RequireSettingsAccess } from "./components/layout/RouteGuards";
+import { ProtectedRoute, RequireAnyPermission, RequireEmployeeHubAccess, RequirePermission, RequireSettingsAccess,RequirePayrollAccess } from "./components/layout/RouteGuards";
 import ForgotPasswordPage from "./features/auth/ForgotPasswordPage";
 import LoginPage from "./features/auth/LoginPage";
 import ResetPasswordPage from "./features/auth/ResetPasswordPage";
@@ -24,10 +24,23 @@ const ImportWorkspacePage = lazy(() => import("./domains/imports/ImportWorkspace
 const ImportsPage = lazy(() => import("./domains/imports/ImportsPage"));
 const NewImportPage = lazy(() => import("./domains/imports/NewImportPage"));
 const InventoryPage = lazy(() => import("./domains/inventory/InventoryPage"));
+const PersistentInventoryPage = lazy(() => import("./domains/inventory/PersistentInventoryPage"));
+const StockHoldsPage = lazy(() => import("./domains/inventory/StockHoldsPage"));
+const StockControlsPage = lazy(() => import("./domains/inventory/StockControlsPage"));
+const StockControlWorkspacePage = lazy(() => import("./domains/inventory/StockControlWorkspacePage"));
+const ReturnsPage = lazy(() => import("./domains/sales/ReturnsPage"));
+const ClaimsPage = lazy(() => import("./domains/claims/ClaimsPage"));
+const ClaimWorkspacePage = lazy(() => import("./domains/claims/ClaimWorkspacePage"));
+const ReturnWorkspacePage = lazy(() => import("./domains/sales/ReturnWorkspacePage"));
+const OpeningDataPage = lazy(() => import("./domains/opening/OpeningDataPage"));
+const ApprovalInboxPage = lazy(() => import("./domains/controls/ApprovalInboxPage"));
+const ApprovalPoliciesPage = lazy(() => import("./domains/controls/ApprovalPoliciesPage"));
+const LedgerPage = lazy(() => import("./domains/ledger/LedgerPage"));
+const JournalWorkspacePage = lazy(() => import("./domains/ledger/JournalWorkspacePage"));
 const PrintPage = lazy(() => import("./domains/print/PrintPage"));
 const ReportsPage = lazy(() => import("./domains/reports/ReportsPage"));
 const ReportDetailPage = lazy(() => import("./domains/reports/ReportDetailPage"));
-const SalesPage = lazy(() => import("./domains/sales/SalesPage"));
+const SalesPage = lazy(() => foundationMode ? import("./domains/sales/PersistentSalesPage") : import("./domains/sales/SalesPage"));
 const SalesOrderWorkspacePage = lazy(() => import("./domains/sales/SalesOrderWorkspacePage"));
 const EmployeesPage = lazy(() => import("./domains/employees/EmployeesPage"));
 const SettingsPage = lazy(() => import("./domains/settings/SettingsPage"));
@@ -37,6 +50,11 @@ const BackendMastersPage = lazy(() => import("./features/auth/BackendMastersPage
 const BackendPrintSettings = lazy(() => import("./features/auth/BackendPrintSettings"));
 const PersistentDashboard = lazy(() => import("./domains/dashboard/PersistentDashboard"));
 const OperationalSettingsPage = lazy(() => import("./domains/settings/OperationalSettingsPage"));
+const LaunchChecksPage = lazy(() => import("./domains/settings/LaunchChecksPage"));
+const InvitationQueuePage = lazy(() => import("./domains/employees/InvitationQueuePage"));
+const PayrollPage=lazy(()=>import("./domains/payroll/PayrollPage"));
+const PayrollRunWorkspacePage=lazy(()=>import("./domains/payroll/PayrollRunWorkspacePage"));
+const MyPayslipsPage=lazy(()=>import("./domains/payroll/MyPayslipsPage"));
 const SmartInsightsPage = lazy(() => import("./components/ai/SmartInsightsPage"));
 
 const deferred = (element: ReactNode) => (
@@ -85,20 +103,38 @@ function App() {
         {foundationMode ? <Route path="/backend" element={<BackendWorkspace />}>
           <Route index element={guarded("dashboard", <PersistentDashboard />)} />
           <Route path="profile" element={deferred(<ProfilePage />)} />
+          <Route path="payslips" element={deferred(<MyPayslipsPage/>)} />
+          <Route path="payroll" element={<RequirePayrollAccess>{deferred(<PayrollPage/>)}</RequirePayrollAccess>} />
+          <Route path="payroll/runs/:runId" element={<RequirePayrollAccess>{deferred(<PayrollRunWorkspacePage/>)}</RequirePayrollAccess>} />
           <Route path="imports" element={guarded("import", <ImportsPage />)} />
           <Route path="imports/new" element={<RequirePermission permission="import" action="create">{deferred(<NewImportPage />)}</RequirePermission>} />
           <Route path="imports/:importId" element={guarded("import", <ImportWorkspacePage />)} />
-          <Route path="inventory" element={guarded("inventory", <InventoryPage />)} />
+          <Route path="inventory" element={guarded("inventory", <PersistentInventoryPage />)} />
+          <Route path="inventory/holds" element={guarded("inventory", <StockHoldsPage />)} />
+          <Route path="inventory/controls" element={guarded("inventory", <StockControlsPage />)} />
+          <Route path="inventory/controls/:controlId" element={guarded("inventory", <StockControlWorkspacePage />)} />
+          <Route path="returns" element={<RequireAnyPermission permissions={["sales","inventory"]}>{deferred(<ReturnsPage/>)}</RequireAnyPermission>}/>
+          <Route path="supplier-claims" element={<RequireAnyPermission permissions={["import","inventory","accounts"]}>{deferred(<ClaimsPage/>)}</RequireAnyPermission>}/>
+          <Route path="supplier-claims/:claimId" element={<RequireAnyPermission permissions={["import","inventory","accounts"]}>{deferred(<ClaimWorkspacePage/>)}</RequireAnyPermission>}/>
+          <Route path="returns/:returnId" element={<RequireAnyPermission permissions={["sales","inventory"]}>{deferred(<ReturnWorkspacePage/>)}</RequireAnyPermission>}/>
           <Route path="sales" element={<RequireAnyPermission permissions={["sales", "marketing"]}>{deferred(<SalesPage />)}</RequireAnyPermission>} />
           <Route path="employees" element={<RequireEmployeeHubAccess>{deferred(<EmployeesPage />)}</RequireEmployeeHubAccess>} />
+          <Route path="employees/invitations" element={<RequirePermission permission="users" action="create">{deferred(<InvitationQueuePage />)}</RequirePermission>} />
           <Route path="sales/orders/:orderId" element={guarded("sales", <SalesOrderWorkspacePage />)} />
           <Route path="accounts" element={guarded("accounts", <AccountsPage />)} />
+          <Route path="accounts/ledger" element={guarded("accounts", <LedgerPage />)} />
+          <Route path="accounts/ledger/journals/:journalId" element={guarded("accounts", <JournalWorkspacePage />)} />
+          <Route path="approvals" element={deferred(<ApprovalInboxPage />)} />
           <Route path="reports" element={guarded("reports", <ReportsPage />)} />
           <Route path="reports/:reportId" element={guarded("reports", <ReportDetailPage />)} />
           <Route path="print/:documentType/:id" element={guarded("print", <PrintPage />)} />
           <Route path="settings" element={<RequireAnyPermission permissions={["products", "suppliers", "settings", "accounts"]}>{deferred(<BackendMastersPage />)}</RequireAnyPermission>} />
           <Route path="settings/print" element={guarded("settings", <BackendPrintSettings />)} />
           <Route path="settings/operations" element={guarded("settings", <OperationalSettingsPage />)} />
+          <Route path="settings/launch" element={guarded("settings", <LaunchChecksPage />)} />
+          <Route path="settings/approvals" element={guarded("settings", <ApprovalPoliciesPage />)} />
+          <Route path="settings/opening" element={guarded("settings", <OpeningDataPage />)} />
+          <Route path="settings/opening/:draftId" element={guarded("settings", <OpeningDataPage />)} />
           <Route path="*" element={<Navigate to="/backend" replace />} />
         </Route> : null}
         <Route path="/app" element={foundationMode ? <PersistentWorkspaceAlias /> : <AppLayout />}>

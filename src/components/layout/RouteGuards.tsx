@@ -8,6 +8,7 @@ import { canAccessEmployeeHub, canAccessSettings, hasEffectivePermission } from 
 import type { PermissionAction, PermissionKey } from "../../types";
 import { foundationMode } from "../../lib/runtime";
 import MfaSecurityGate from "../../features/auth/MfaSecurity";
+import { canReadPayroll } from "../../domains/ledger/access";
 
 export function ProtectedRoute() {
   const session = useAuthStore((state) => state.session);
@@ -98,6 +99,10 @@ export function RequireSettingsAccess({ children }: { children: ReactNode }) {
 export function RequireEmployeeHubAccess({ children }: { children: ReactNode }) {
   const user = useAuthStore((state) => state.session?.user);
   return canAccessEmployeeHub(user) ? <>{children}</> : <AccessDenied />;
+}
+export function RequirePayrollAccess({children}:{children:ReactNode}){
+  const user=useAuthStore(s=>s.session?.user);
+  return canReadPayroll(user)?<>{children}</>:<AccessDenied/>;
 }
 
 export function AccessDenied({ permission }: { permission?: PermissionKey }) {

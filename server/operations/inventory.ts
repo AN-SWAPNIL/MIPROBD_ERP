@@ -1,26 +1,36 @@
 import { Router } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Decimal } from "decimal.js";
-import { importCases, postingKeys, products, receiptLines, stockBatches, stockMovements, warehouseReceipts } from "../../database/schema.js";
+import { importCases, openingPositions, postingKeys, receiptLines, stockBatches, stockMovements, warehouseReceipts } from "../../database/schema.js";
 import type { Transaction } from "../../database/client.js";
 import type { DispatchPreview, StockBatch, WarehouseReceipt } from "../../src/domains/erp.types.js";
 import type { User } from "../../src/types/index.js";
 import { hasCapability, hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
 import { businessDate } from "../../src/lib/date.js";
-import { expiryStatusAt } from "../../src/domains/inventory/expiry.js";
+import { inventoryPageInput } from "../../src/domains/inventory/pageContracts.js";
+import { createInventoryReadRouter, inventoryPage } from "./inventory-read.js";
 import { audit, identity, type Context } from "../foundation/context.js";
 import { assertAllowed, HttpError } from "../foundation/errors.js";
 import { dispatchInput, receiptInput } from "./contracts.js";
 import { lockActor, newId, nextNumber, postingIdentity, previousPosting } from "./common.js";
-import { loadImport, lockImport, money } from "./import-records.js";
+import { loadImport, lockImport } from "./import-records.js";
+import { recordStockLedger } from "../ledger/service.js";
+import { effectiveCondition, heldAt, lastHoldDate } from "./hold-query.js";
 
 export function receiptValue(totalValue: string, importedQuantity: string, previousAccepted: string, previousValue: string, received: string) {
   return new Decimal(totalValue).mul(new Decimal(previousAccepted).plus(received)).div(importedQuantity).toDecimalPlaces(2).minus(previousValue).toFixed(2);
 }
-export function fifoPreview(productId: string, quantity: string, date: string, batches: Pick<StockBatch, "id" | "productId" | "quantityAvailable" | "batchNumber" | "lotNumber" | "receivedDate" | "expiryDate">[], preferred?: string): DispatchPreview {
-  const eligible = batches.filter((row) => row.productId === productId && row.receivedDate <= date && row.expiryDate >= date && new Decimal(row.quantityAvailable).gt(0))
+export async function readFifoBatches(tx: Transaction, productId: string, lock = false, date = businessDate()) {
+  const held = heldAt(sql`${stockBatches.id}`, sql`${date}::date`);
+  const query = tx.select({ batch: stockBatches, condition: sql<NonNullable<StockBatch["condition"]>>`${effectiveCondition(sql`${stockBatches.id}`, sql`${date}::date`)}`, heldQuantity: sql<string>`${held}::text`, eligibleQuantity: sql<string>`(${stockBatches.quantityAvailable}-${held})::text`, lastControlDate: sql<string | null>`${lastHoldDate(sql`${stockBatches.id}`)}::text`, availableFromDate: sql<string>`coalesce((select ${openingPositions.asOfDate} from ${openingPositions} where ${openingPositions.id}=${stockBatches.openingPositionId}),(select r.posted_date from erp_private.supplier_replacement_receipts r where r.id=${stockBatches.replacementReceiptId}),(select p.date from erp_private.stock_control_postings p where p.line_id=${stockBatches.correctionLineId}),${stockBatches.receivedDate})::text` }).from(stockBatches)
+    .where(eq(stockBatches.productId, productId)).orderBy(stockBatches.receivedDate, stockBatches.id);
+  const rows = lock ? await query.for("update") : await query;
+  return rows.map(({ batch, ...availability }) => ({ ...batch, ...availability }));
+}
+export function fifoPreview(productId: string, quantity: string, date: string, batches: (Pick<StockBatch, "id" | "productId" | "quantityAvailable" | "batchNumber" | "lotNumber" | "receivedDate" | "expiryDate"> & Pick<StockBatch, "condition" | "availableFromDate" | "eligibleQuantity"> & { lastControlDate?: string | null })[], preferred?: string): DispatchPreview {
+  const eligible = batches.filter((row) => row.productId === productId && (!row.condition || row.condition === "Saleable") && row.receivedDate <= date && (row.availableFromDate ?? row.receivedDate) <= date && (!row.lastControlDate || row.lastControlDate <= date) && row.expiryDate >= date && new Decimal(row.eligibleQuantity ?? row.quantityAvailable).gt(0))
     .sort((a, b) => a.receivedDate.localeCompare(b.receivedDate) || a.id.localeCompare(b.id));
-  const available = eligible.reduce((total, row) => total.plus(row.quantityAvailable), new Decimal(0));
+  const available = eligible.reduce((total, row) => total.plus(row.eligibleQuantity ?? row.quantityAvailable), new Decimal(0));
   const requested = new Decimal(quantity);
   if (!requested.isFinite() || requested.lte(0)) throw new HttpError(422, "Dispatch quantity must be positive.");
   if (requested.gt(available)) throw new HttpError(409, `Only ${available.toFixed(4)} eligible units are available.`);
@@ -31,7 +41,7 @@ export function fifoPreview(productId: string, quantity: string, date: string, b
   const allocations: DispatchPreview["allocations"] = [];
   for (const row of ordered) {
     if (remaining.lte(0)) break;
-    const take = Decimal.min(remaining, row.quantityAvailable);
+    const take = Decimal.min(remaining, row.eligibleQuantity ?? row.quantityAvailable);
     allocations.push({ batchId: row.id, batchNumber: row.batchNumber, lotNumber: row.lotNumber, quantity: take.toFixed(4), receivedDate: row.receivedDate, expiryDate: row.expiryDate });
     remaining = remaining.minus(take);
   }
@@ -54,6 +64,7 @@ async function readReceipts(tx: Transaction, importId: string, user: User, recei
 }
 export function createInventoryRouter(ctx: Context) {
   const router = Router();
+  router.use(createInventoryReadRouter(ctx));
   router.post("/imports/:id/receive", async (req, res) => {
     const input = receiptInput.parse(req.body);
     const actor = identity(res);
@@ -76,6 +87,7 @@ export function createInventoryRouter(ctx: Context) {
         values.set(line.importItemId, (values.get(line.importItemId) ?? new Decimal(0)).plus(line.inventoryValueBdt));
       }
       const id = newId("grn");
+      const ledgerMovements: Parameters<typeof recordStockLedger>[2][] = [];
       await tx.insert(warehouseReceipts).values({ id, importId: row.id, snapshotId: record.snapshot!.id, receiptNumber: await nextNumber(tx, "GRN", input.receivedDate), receivedDate: input.receivedDate, receivedBy: user.id, receivedByName: user.name });
       for (const line of input.lines) {
         const item = record.items.find((item) => item.id === line.importItemId);
@@ -96,13 +108,15 @@ export function createInventoryRouter(ctx: Context) {
         if (received.gt(0)) {
           const batchId = newId("batch");
           await tx.insert(stockBatches).values({ id: batchId, productId: item.productId, receiptLineId: lineId, sourceImportId: row.id, sourceReference: record.primaryReference, lotNumber: line.lotNumber, batchNumber: line.batchNumber, manufacturingDate: line.manufacturingDate!, expiryDate: line.expiryDate!, receivedDate: input.receivedDate, quantityReceived: received.toFixed(4), quantityAvailable: received.toFixed(4), landedCostPerUnit: rate, receivedValueBdt: value, availableValueBdt: value, warehouse: line.warehouse, location: line.location });
-          await tx.insert(stockMovements).values({ id: newId("mov"), batchId, type: "Receive", quantity: received.toFixed(4), valueBdt: value, date: input.receivedDate, reference: id, createdBy: user.id, createdByName: user.name });
+          const movement = { id: newId("mov"), batchId, type: "Receive" as const, quantity: received.toFixed(4), valueBdt: value, date: input.receivedDate, reference: id, createdBy: user.id, createdByName: user.name };
+          await tx.insert(stockMovements).values(movement); ledgerMovements.push(movement);
         }
         processed.set(item.id, nextProcessed);
         accepted.set(item.id, priorAccepted.plus(received));
         values.set(item.id, priorValue.plus(value));
       }
       const complete = record.items.every((item) => (processed.get(item.id) ?? new Decimal(0)).eq(item.quantity));
+      for (const movement of ledgerMovements) await recordStockLedger(tx, user, movement);
       await tx.update(importCases).set({ status: complete ? "Received" : "Partially Received", updatedAt: new Date() }).where(eq(importCases.id, row.id));
       await tx.insert(postingKeys).values({ ...key, resourceId: id });
       await audit(tx, user.id, "Warehouse receipt posted", "Import", row.id, { receiptId: id, lines: input.lines.length });
@@ -117,35 +131,15 @@ export function createInventoryRouter(ctx: Context) {
     const data = await ctx.db.transaction((tx) => readReceipts(tx, String(req.params.id), user), { isolationLevel: "repeatable read", accessMode: "read only" });
     res.json({ success: true, data, message: "Warehouse receipt results loaded" });
   });
-  router.get("/inventory/batches", async (_req, res) => {
-    const user = identity(res).user;
-    assertAllowed(hasEffectivePermission(user, "inventory"));
-    const rows = await ctx.db.select({ batch: stockBatches, product: products }).from(stockBatches).innerJoin(products, eq(stockBatches.productId, products.id)).orderBy(stockBatches.receivedDate, stockBatches.id);
-    const today = businessDate();
-    const data = rows.map(({ batch, product }) => {
-      return { id: batch.id, productId: batch.productId, productCode: product.code, productName: product.name, sourceImportId: batch.sourceImportId, sourceReference: batch.sourceReference, lotNumber: batch.lotNumber, batchNumber: batch.batchNumber, manufacturingDate: batch.manufacturingDate, expiryDate: batch.expiryDate, receivedDate: batch.receivedDate, quantityReceived: batch.quantityReceived, quantityAvailable: batch.quantityAvailable, warehouse: batch.warehouse, location: batch.location, landedCostPerUnit: hasCapability(user, "view_sensitive_cost") ? batch.landedCostPerUnit : "0", sourceType: "Import Receipt", expiryStatus: expiryStatusAt(batch.expiryDate, today) };
-    });
-    res.json({ success: true, data, message: "Stock batches loaded" });
-  });
-  router.get("/inventory/stock", async (_req, res) => {
-    const user = identity(res).user;
-    assertAllowed(hasEffectivePermission(user, "inventory"));
-    const rows = await ctx.db.select({ batch: stockBatches, product: products }).from(stockBatches).innerJoin(products, eq(stockBatches.productId, products.id)).orderBy(stockBatches.receivedDate, stockBatches.id);
-    const grouped = new Map<string, typeof rows>();
-    for (const row of rows) if (new Decimal(row.batch.quantityAvailable).gt(0)) grouped.set(row.product.id, [...grouped.get(row.product.id) ?? [], row]);
-    const data = [...grouped.values()].map((rows) => ({ productId: rows[0].product.id, productCode: rows[0].product.code, productName: rows[0].product.name, imageUrl: rows[0].product.imageUrl, standardSalePrice: rows[0].product.standardSalePrice, availableQuantity: rows.reduce((total, row) => total.plus(row.batch.quantityAvailable), new Decimal(0)).toFixed(4), oldestLot: rows[0].batch.lotNumber, nearestExpiry: rows.map((row) => row.batch.expiryDate).sort()[0], inventoryValue: hasCapability(user, "view_sensitive_cost") ? money(rows.reduce((total, row) => total.plus(row.batch.availableValueBdt), new Decimal(0))) : undefined }));
-    res.json({ success: true, data, message: "Stock summary loaded; expired batches remain visible but cannot be dispatched" });
-  });
-  router.get("/inventory/movements", async (_req, res) => {
-    assertAllowed(hasEffectivePermission(identity(res).user, "inventory"));
-    const rows = await ctx.db.select({ movement: stockMovements, batch: stockBatches, product: products }).from(stockMovements).innerJoin(stockBatches, eq(stockMovements.batchId, stockBatches.id)).innerJoin(products, eq(stockBatches.productId, products.id)).orderBy(stockMovements.createdAt, stockMovements.id);
-    res.json({ success: true, data: rows.map(({ movement, batch, product }) => ({ id: movement.id, date: movement.date, productId: product.id, productName: product.name, batchId: batch.id, batchNumber: batch.batchNumber, type: movement.type, quantity: movement.quantity, reference: movement.type === "Receive" ? batch.sourceReference : movement.reference, createdBy: movement.createdByName })), message: "Stock movements loaded" });
+  for (const kind of ["stock", "batches", "movements"] as const) router.get(`/inventory/${kind}`, async (req, res) => {
+    const data = await inventoryPage(ctx, identity(res).user, kind, inventoryPageInput.parse(req.query), true);
+    res.json({ success: true, data: data.rows, meta: { total: data.total, limit: 500 }, message: "Bounded inventory reference list loaded" });
   });
   router.post("/inventory/dispatch-preview", async (req, res) => {
     const user = identity(res).user;
     assertAllowed(hasEffectivePermission(user, "inventory") || hasEffectivePermission(user, "sales"));
     const input = dispatchInput.parse(req.body);
-    const rows = await ctx.db.select().from(stockBatches).where(eq(stockBatches.productId, input.productId));
+    const rows = await ctx.db.transaction((tx) => readFifoBatches(tx, input.productId, false, input.date ?? businessDate()), { isolationLevel: "repeatable read", accessMode: "read only" });
     res.json({ success: true, data: fifoPreview(input.productId, input.quantity, input.date ?? businessDate(), rows, input.batchId), message: "FIFO preview only; no stock has been dispatched" });
   });
   return router;

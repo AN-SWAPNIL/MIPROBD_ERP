@@ -25,7 +25,10 @@ export const capabilityOptions: ReadonlyArray<readonly [Capability, string]> = [
   ["approve_stock_override", "Approve FIFO override"],
   ["approve_special_price", "Approve special price"],
   ["manage_users", "Manage employee lifecycle"],
-  ["manage_user_access", "Manage roles and access"]
+  ["manage_user_access", "Manage roles and access"],
+  ["manage_ledger", "Manage general ledger"], ["approve_ledger", "Approve ledger journals"],
+  ["view_payroll", "View confidential payroll"], ["manage_payroll", "Prepare and pay payroll"],
+  ["approve_payroll", "Approve payroll"], ["approve_stock_control", "Approve stock controls"]
 ];
 
 function roleCanOpen(role: Role, path: string, permission: PermissionKey) {
@@ -52,7 +55,7 @@ export function RoleAccessSummary({ role }: { role: Role }) {
           return <span className={`flex items-center gap-1.5 rounded bg-white px-2 py-1.5 text-xs font-semibold ${allowed ? "text-emerald-700" : "text-slate-400"}`} key={area.path}>{allowed ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}{area.label}</span>;
         })}
       </div>
-      <p className="mt-2 text-[11px] leading-4 text-blue-800">Sensitive capabilities remain separate from workspace access. An explicit denial always wins.</p>
+      <p className="mt-2 text-[11px] leading-4 text-blue-800">{role === "Super Admin" ? "Super Admin has full owner access, including policy administration and self-approval. Business validations and audit history still apply." : "Sensitive capabilities remain separate from workspace access. An explicit denial wins for delegated users."}</p>
     </section>
   );
 }
@@ -134,12 +137,12 @@ export default function EmployeeEditor({ actor, user, mode, busy, onSubmit }: Em
         <details className="rounded-md border border-slate-200" open={form.permissionOverrides.length > 0}>
           <summary className="cursor-pointer px-3 py-3 text-sm font-bold text-blue-950">Employee-specific access <span className="ml-2 text-xs font-normal text-slate-500">{form.permissionOverrides.length} exception{form.permissionOverrides.length === 1 ? "" : "s"}</span></summary>
           <div className="grid gap-3 border-t border-slate-200 p-3">
-            {permissionKeys.map((permission) => <details className="rounded-md border border-slate-200 bg-white" key={permission} open={form.permissionOverrides.some((override) => override.permission === permission)}><summary className="cursor-pointer px-3 py-2 text-sm font-semibold capitalize">{permission.replaceAll("_", " ")}</summary><div className="grid gap-2 border-t border-slate-100 p-3 sm:grid-cols-2 lg:grid-cols-3">{permissionActions.map((action) => <label className="grid grid-cols-[1fr_112px] items-center gap-2 text-xs" key={action}><span className="capitalize text-slate-600">{action}<small className="block text-[10px] text-slate-400">Role: {hasRolePermission(form.role, permission, action) ? "Allowed" : "Denied"}</small></span><select className={inputClass} value={effectFor(permission, action)} onChange={(event) => setEffect(permission, action, event.target.value as PermissionEffect | "DEFAULT")}><option value="DEFAULT">Role default</option><option value="ALLOW">Additional allow</option><option value="DENY">Explicit deny</option></select></label>)}</div></details>)}
+            {permissionKeys.map((permission) => <details className="rounded-md border border-slate-200 bg-white" key={permission} open={form.permissionOverrides.some((override) => override.permission === permission)}><summary className="cursor-pointer px-3 py-2 text-sm font-semibold capitalize">{permission.replaceAll("_", " ")}</summary><div className="grid gap-2 border-t border-slate-100 p-3 sm:grid-cols-2 lg:grid-cols-3">{permissionActions.map((action) => <label className="grid grid-cols-[1fr_112px] items-center gap-2 text-xs" key={action}><span className="capitalize text-slate-600">{action}<small className="block text-[10px] text-slate-400">Role: {hasRolePermission(form.role, permission, action) ? "Allowed" : "Denied"}</small></span><select className={inputClass} disabled={form.role === "Super Admin"} value={form.role === "Super Admin" ? "ALLOW" : effectFor(permission, action)} onChange={(event) => setEffect(permission, action, event.target.value as PermissionEffect | "DEFAULT")}><option value="DEFAULT">Role default</option><option value="ALLOW">Additional allow</option><option value="DENY">Explicit deny</option></select></label>)}</div></details>)}
           </div>
         </details>
         <fieldset className="rounded-md border border-slate-200 p-3">
           <legend className="px-1 text-xs font-bold uppercase text-slate-500">Sensitive capabilities</legend>
-          <div className="grid gap-2 sm:grid-cols-2">{capabilityOptions.filter(([value]) => canGrantCapability(actor, value) || form.capabilities.includes(value)).map(([value, label]) => <label className="flex items-center gap-2 rounded bg-slate-50 p-2 text-sm" key={value}><input type="checkbox" checked={form.capabilities.includes(value)} disabled={value === "manage_user_access" && actor.role !== "Super Admin"} onChange={(event) => setForm((current) => ({ ...current, capabilities: event.target.checked ? [...current.capabilities, value] : current.capabilities.filter((capability) => capability !== value) }))} /> {label}</label>)}</div>
+          <div className="grid gap-2 sm:grid-cols-2">{capabilityOptions.filter(([value]) => canGrantCapability(actor, value) || form.capabilities.includes(value)).map(([value, label]) => <label className="flex items-center gap-2 rounded bg-slate-50 p-2 text-sm" key={value}><input type="checkbox" checked={form.role === "Super Admin" || form.capabilities.includes(value)} disabled={form.role === "Super Admin" || value === "manage_user_access" && actor.role !== "Super Admin"} onChange={(event) => setForm((current) => ({ ...current, capabilities: event.target.checked ? [...current.capabilities, value] : current.capabilities.filter((capability) => capability !== value) }))} /> {label}</label>)}</div>
         </fieldset>
         <div className="flex justify-end"><Button type="submit" variant="primary" icon={<ShieldCheck className="h-4 w-4" />} disabled={busy}>Save Access</Button></div>
       </form>

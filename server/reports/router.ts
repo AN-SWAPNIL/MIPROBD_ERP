@@ -16,8 +16,16 @@ import { importSpec } from "./imports.js";
 import { controlSpec } from "./controls.js";
 import { workforceReportSpec } from "../workforce/reporting.js";
 import { fieldVisitReport } from "../workforce/visit-reports.js";
+import { ledgerReportSpec } from "../ledger/reporting.js";
+import { canReadLedger,canReadPayroll } from "../../src/domains/ledger/access.js";
+import { returnReportSpec } from "../returns/reporting.js";
+import { payrollReportSpec } from "../payroll/reporting.js";
+import { claimReportSpec } from "../claims/reporting.js";
 
 export function canReadReport(user: User, report: ReportDefinition) {
+  if(["supplier-claims","supplier-replacements","supplier-replacement-receipts"].includes(report.id))return hasEffectivePermission(user,"reports")&&["import","inventory","accounts"].some(k=>hasEffectivePermission(user,k as "import"|"inventory"|"accounts"));
+  if(report.id.startsWith("payroll-"))return hasEffectivePermission(user,"reports")&&canReadPayroll(user);
+  if (report.id.startsWith("ledger-") && !canReadLedger(user)) return false;
   const sourceAllowed=report.id==="employee-list"?canAccessEmployeeHub(user):hasEffectivePermission(user, report.permission.key, report.permission.action);
   if (!hasEffectivePermission(user, "reports") || !sourceAllowed || report.capability && !hasCapability(user, report.capability)) return false;
   if (report.id === "employee-list" && !canAccessEmployeeHub(user)) return false;
@@ -26,7 +34,7 @@ export function canReadReport(user: User, report: ReportDefinition) {
   return true;
 }
 export function reportSpec(report: ReportDefinition, user: User, q: Query) {
-  const spec = salesSpec(report.id,user,q) ?? partySpec(report.id,user,q) ?? inventorySpec(report.id,user,q) ?? importSpec(report.id,q) ?? financeSpec(report.id,q) ?? fieldVisitReport(report.id,user,q) ?? workforceReportSpec(report.id,user,q) ?? controlSpec(report.id,q,user);
+  const spec = claimReportSpec(report.id,user,q) ?? payrollReportSpec(report.id,user,q) ?? returnReportSpec(report.id,user,q) ?? ledgerReportSpec(report.id,user,q) ?? salesSpec(report.id,user,q) ?? partySpec(report.id,user,q) ?? inventorySpec(report.id,user,q) ?? importSpec(report.id,q) ?? financeSpec(report.id,q) ?? fieldVisitReport(report.id,user,q) ?? workforceReportSpec(report.id,user,q) ?? controlSpec(report.id,q,user);
   if (!spec) return undefined;
   if ((report.category === "suppliers" && !hasCapability(user,"view_sensitive_cost")) || user.role === "Warehouse Manager" && ["sales","employees"].includes(report.category)) {
     spec.columns = spec.columns.filter((column) => column.format !== "money");
@@ -59,7 +67,7 @@ export async function generate(ctx: Context,user: User,definition: ReportDefinit
   const offset = purpose === "screen" ? (q.page-1)*q.pageSize : 0;
   const payload = await ctx.db.transaction(async (tx) => {
     if (spec.inventoryJournal) {
-      const [quality] = (await tx.execute<{ unsupported: boolean }>(sql`select exists(select 1 from erp_private.stock_movements where date<=${q.to}::date and type not in ('Receive','Dispatch')) unsupported`)).rows;
+      const [quality] = (await tx.execute<{ unsupported: boolean }>(sql`select exists(select 1 from erp_private.stock_movements where date<=${q.to}::date and (quantity_delta is null or value_delta_bdt is null)) unsupported`)).rows;
       if (quality.unsupported) throw new HttpError(409,"A stock journal type requires report reconciliation before generating this inventory report.");
     }
     const query: SQL = sql`with base as (${spec.base}),scoped as (select * from base where ${predicate}),result as (${spec.result})

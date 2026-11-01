@@ -6,8 +6,11 @@ import { randomUUID } from "node:crypto";
 import { employees } from "../database/schema.js";
 import { createContext, audit } from "../server/foundation/context.js";
 import { backupDatabase } from "./database.js";
+import { attachmentMimes } from "../src/lib/files/attachments.js";
+import { privateArtifactPath } from "./private-paths.js";
 
 const args = new Set(process.argv.slice(2));
+const privateFolder = privateArtifactPath(process.env.ERP_BOOTSTRAP_DIR, "artifacts/private", true);
 async function main() {
   if (!args.has("--apply")) throw new Error("Explicit --apply is required");
   const email = z.email().parse(process.env.SUPER_ADMIN_EMAIL).toLowerCase();
@@ -29,11 +32,11 @@ async function main() {
         const id = `emp-${randomUUID()}`;
         await tx.insert(employees).values({ id, authUserId: data.user.id, name, email, role: "Super Admin", status: "Active", employeeCode: "ADMIN-001", title: "Super Admin", department: "Administration", capabilities: ["view_sensitive_cost", "edit_sensitive_cost", "finalize_landed_cost", "reopen_landed_cost", "view_profit", "view_financial_position", "approve_stock_override", "manage_users", "manage_user_access", "approve_special_price"] });
         await audit(tx, id, "Initial administrator provisioned", "Employee", id);
-        const folder = new URL("../artifacts/private/", import.meta.url);
+        const folder = privateFolder;
         await mkdir(folder, { recursive: true });
         // This is an expiring credential: never print it, commit it, or send it to analytics/logs.
         await writeFile(new URL("administrator-invitation.txt", folder), `${data.properties.action_link}\n`, { flag: "wx", mode: 0o600 });
-        console.log("Administrator invitation saved privately to artifacts/private/administrator-invitation.txt; no email sent.");
+        console.log(`Administrator invitation saved privately under ${process.env.ERP_BOOTSTRAP_DIR ?? "artifacts/private"}; no email sent. Never share or commit this setup link.`);
       } else {
         console.log("Administrator already provisioned; credentials and role unchanged.");
         if (args.has("--issue-link")) {
@@ -42,12 +45,12 @@ async function main() {
           if (ownerError || !owner.user) throw new Error("Administrator identity not found");
           const { data: link, error: linkError } = await ctx.admin.auth.admin.generateLink({ type: owner.user.email_confirmed_at ? "recovery" : "invite", email, options: { redirectTo: `${ctx.config.origin}/reset-password` } });
           if (linkError || !link.properties?.action_link || link.user.id !== current.authUserId) throw new Error("Administrator link could not be issued");
-          const folder = new URL("../artifacts/private/", import.meta.url);
+          const folder = privateFolder;
           await mkdir(folder, { recursive: true });
           const fileName = `administrator-invitation-${Date.now()}.txt`;
           await writeFile(new URL(fileName, folder), `${link.properties.action_link}\n`, { flag: "wx", mode: 0o600 });
           await audit(tx, current.id, "Administrator setup link issued", "Employee", current.id);
-          console.log(`New expiring setup link saved privately to artifacts/private/${fileName}; no email sent.`);
+          console.log(`New expiring setup link saved privately under ${process.env.ERP_BOOTSTRAP_DIR ?? "artifacts/private"}; no email sent.`);
         }
       }
     });
@@ -58,7 +61,7 @@ async function main() {
         console.log("Existing bucket preserved:", id);
       } else {
         if (lookupError && !["404", "400"].includes(String(lookupError.status))) throw new Error("Storage bucket lookup failed");
-        const { error } = await ctx.admin.storage.createBucket(id, { public: isPublic, fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: ["image/jpeg", "image/png", "image/webp", "application/pdf"] });
+        const { error } = await ctx.admin.storage.createBucket(id, { public: isPublic, fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: id==="erp-documents"?[...attachmentMimes]:["image/jpeg", "image/png", "image/webp", "application/pdf"] });
         if (error) throw new Error("Storage bucket creation failed");
         console.log("Created restricted bucket:", id);
       }

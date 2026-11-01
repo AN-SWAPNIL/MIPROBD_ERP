@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Banknote, BookOpenText, CheckCircle2, FileBarChart, Pencil, Printer, ReceiptText, Truck, UserRound } from "lucide-react";
+import { ArrowLeft, Banknote, BookOpenText, CheckCircle2, FileBarChart, Pencil, Printer, ReceiptText, RotateCcw, Truck, UserRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Button from "../../components/ui/Button";
@@ -19,6 +19,7 @@ import OrderReceivingDetailsForm from "./OrderReceivingDetailsForm";
 import { CancelInvoiceForm, InvoiceForm } from "./SalesDocumentForms";
 import { CollectionForm, DeliveryForm } from "./SalesForms";
 import { foundationMode, workspacePath } from "../../lib/runtime";
+import PersistentCollectionForm from "./PersistentCollectionForm";
 
 type Dialog = "delivery" | "invoice" | "collection" | "order" | null;
 
@@ -38,8 +39,8 @@ export default function SalesOrderWorkspacePage() {
   const canApprove = hasEffectivePermission(user, "sales", "approve") && user?.role !== "Warehouse Manager";
   const canPrint = hasEffectivePermission(user, "print", "view");
   const canEdit = hasEffectivePermission(user, "sales", "edit") && user?.role !== "Warehouse Manager";
-  const batches = useQuery({ queryKey: ["inventory", "batches", user?.id], queryFn: inventoryService.batches, enabled: dialog === "delivery" && canDispatch });
-  const accounts = useQuery({ queryKey: ["sales", "payment-accounts", user?.id], queryFn: salesService.paymentAccounts, enabled: dialog === "collection" && canPost });
+  const batches = useQuery({ queryKey: ["inventory", "batches", user?.id], queryFn: inventoryService.batches, enabled: dialog === "delivery" && canDispatch && !foundationMode });
+  const accounts = useQuery({ queryKey: ["sales", "payment-accounts", user?.id], queryFn: salesService.paymentAccounts, enabled: dialog === "collection" && canPost && !foundationMode });
   const mutation = useMutation({
     mutationFn: (task: { run: () => Promise<unknown>; message: string }) => task.run(),
     onSuccess: async (_result, task) => {
@@ -57,14 +58,14 @@ export default function SalesOrderWorkspacePage() {
   const ledger = () => navigate(`/app/sales?view=customers&customerId=${encodeURIComponent(order.customerId)}`);
   const reportAvailable = user?.role !== "Warehouse Manager" && visibleReportCatalog(user).some((report) => report.id === "sales-order-register");
   const hasRemaining = order.status !== "Cancelled" && data.fulfilment.some((line) => Number(line.remainingToDeliverQty) > 0);
-  const invoiceCandidates = data.deliveries.filter((delivery) => delivery.status !== "Draft" && !data.invoices.some((invoice) => invoice.status !== "Cancelled" && invoice.deliveryIds.includes(delivery.id)));
+  const invoiceCandidates = data.deliveries.filter((delivery) => delivery.status !== "Draft" && (data.invoiceableDeliveryIds?data.invoiceableDeliveryIds.includes(delivery.id):!data.invoices.some((invoice) => invoice.status !== "Cancelled" && invoice.deliveryIds.includes(delivery.id))));
   const steps: LifecycleStep[] = [
     { id: "quotation", label: "Quotation", state: "complete", detail: stages.quotation },
     { id: "order", label: "Order", state: order.status === "Cancelled" ? "cancelled" : "complete", detail: order.status },
     { id: "delivery", label: "Delivery", state: stages.delivery === "Complete" ? "complete" : stages.delivery === "Partial" ? "warning" : "current", detail: stages.delivery },
     ...(data.financialVisible ? [
-      { id: "invoice", label: "Invoice", state: stages.invoice === "Complete" ? "complete" : ["Partial", "Draft Pending"].includes(stages.invoice ?? "") ? "warning" : "pending", detail: stages.invoice },
-      { id: "collection", label: "Collection", state: stages.collection === "Paid" ? "complete" : ["Partial", "Unpaid"].includes(stages.collection ?? "") ? "warning" : "pending", detail: stages.collection }
+      { id: "invoice", label: "Invoice", state: ["Complete","Not Required"].includes(stages.invoice??"") ? "complete" : ["Partial", "Draft Pending"].includes(stages.invoice ?? "") ? "warning" : "pending", detail: stages.invoice },
+      { id: "collection", label: "Collection", state: ["Paid","Settled","Not Required"].includes(stages.collection??"") ? "complete" : ["Partial", "Unpaid"].includes(stages.collection ?? "") ? "warning" : "pending", detail: stages.collection }
     ] as LifecycleStep[] : [])
   ];
   const printAction = (type: string, id: string, label: string) => canPrint ? <Button variant="ghost" icon={<Printer className="h-4 w-4" />} title={`Print ${label}`} aria-label={`Print ${label}`} onClick={() => print(type, id)} /> : null;
@@ -73,6 +74,7 @@ export default function SalesOrderWorkspacePage() {
     <PageHeader eyebrow="Sales order lifecycle" title={order.orderNumber} subtitle={`${order.customerName} | ${order.date} | ${data.salesperson?.name ?? "Sales owner unassigned"}`} actions={<>
       {canPrint && data.financialVisible ? <Button icon={<Printer className="h-4 w-4" />} onClick={() => print("order", order.id)}>Print Order</Button> : null}
       {customer ? <Button icon={<BookOpenText className="h-4 w-4" />} onClick={ledger}>Customer Ledger</Button> : null}
+      {foundationMode?<Button icon={<RotateCcw className="h-4 w-4"/>} onClick={()=>navigate(`/backend/returns?order=${encodeURIComponent(order.id)}`)}>Returns & Credits</Button>:null}
       {reportAvailable ? <Button icon={<FileBarChart className="h-4 w-4" />} onClick={() => navigate(`/app/reports/sales-order-register?from=${order.date}&to=${businessDate()}&${foundationMode ? "order=" + encodeURIComponent(order.id) : "filter.order=" + encodeURIComponent(order.orderNumber)}`)}>Open Report</Button> : null}
       <StatusBadge status={order.status} />
     </>} />
@@ -84,7 +86,7 @@ export default function SalesOrderWorkspacePage() {
       {canEdit ? <Button icon={<Pencil className="h-4 w-4" />} disabled={mutation.isPending} onClick={() => setDialog("order")}>Order Details</Button> : null}
       {canDispatch && hasRemaining ? <Button variant="primary" icon={<Truck className="h-4 w-4" />} disabled={mutation.isPending} onClick={() => setDialog("delivery")}>New Delivery</Button> : null}
     </div>}>
-      <Rows headers={["Product", "Ordered", "Delivered", ...(data.financialVisible ? ["Approved Invoiced"] : []), "Remaining to Deliver", ...(data.financialVisible ? ["Delivered Not Invoiced"] : [])]} rows={data.fulfilment.map((line) => [<span><strong className="block text-blue-950">{line.productCode}</strong>{line.productName}</span>, formatNumber(line.orderedQty), formatNumber(line.deliveredQty), ...(data.financialVisible ? [<span>{formatNumber(line.approvedInvoicedQty)}{Number(line.draftInvoicedQty) > 0 ? <small className="block text-amber-700">{formatNumber(line.draftInvoicedQty)} pending approval</small> : null}</span>] : []), formatNumber(line.remainingToDeliverQty), ...(data.financialVisible ? [formatNumber(line.deliveredNotInvoicedQty)] : [])])} />
+      <Rows headers={["Product", "Ordered", "Gross Delivered", ...(data.financialVisible ? ["Approved Invoiced"] : []), "Remaining to Deliver", ...(data.financialVisible ? ["Accepted Not Invoiced"] : [])]} rows={data.fulfilment.map((line) => [<span><strong className="block text-blue-950">{line.productCode}</strong>{line.productName}</span>, formatNumber(line.orderedQty), <span>{formatNumber(line.deliveredQty)}{line.returnedQty&&Number(line.returnedQty)>0?<small className="block text-amber-700">Returned: {formatNumber(line.returnedQty)}</small>:null}{line.refusedQty&&Number(line.refusedQty)>0?<small className="block text-amber-700">Refused: {formatNumber(line.refusedQty)}</small>:null}</span>, ...(data.financialVisible ? [<span>{formatNumber(line.approvedInvoicedQty)}{Number(line.draftInvoicedQty) > 0 ? <small className="block text-amber-700">{formatNumber(line.draftInvoicedQty)} pending approval</small> : null}</span>] : []), formatNumber(line.remainingToDeliverQty), ...(data.financialVisible ? [formatNumber(line.deliveredNotInvoicedQty)] : [])])} />
     </Panel>
     <div className="grid gap-4 lg:grid-cols-2">
       {customer ? <Panel title="Customer"><dl className="grid grid-cols-2 gap-4 p-4 text-sm"><Info label="Name" value={customer.name} /><Info label="Current Due (All Orders)" value={formatCurrency(customer.currentDue)} /><Info label="Credit Limit" value={formatCurrency(customer.creditLimit)} /><Info label="Payment Terms" value={customer.paymentTerms} /></dl></Panel> : null}
@@ -106,9 +108,9 @@ export default function SalesOrderWorkspacePage() {
     </> : null}
     {hasEffectivePermission(user, "inventory", "view") ? <Panel title="Linked stock movements"><Rows headers={["Date", "Challan", "Product", "Batch", "Quantity", "Posted By"]} rows={data.stockMovements.map((movement) => [movement.date, movement.reference, movement.productName, movement.batchNumber, formatNumber(movement.quantity), movement.createdBy])} empty="No dispatch movement has been posted." /></Panel> : null}
     {dialog ? <Modal open title={{ delivery: "Create delivery challan", invoice: "Create sales invoice", collection: "Post customer collection", order: "Order Receiving Details" }[dialog]} onClose={() => setDialog(null)} width={dialog === "delivery" || dialog === "order" ? "max-w-5xl" : "max-w-3xl"}>
-      {dialog === "delivery" ? batches.isPending ? <LoadingBlock /> : batches.isError ? <ErrorBlock error={batches.error} /> : <DeliveryForm orders={[order]} deliveries={data.deliveries} batches={batches.data} canOverride={hasCapability(user, "approve_stock_override")} busy={mutation.isPending} onSubmit={(payload) => mutation.mutate({ run: () => salesService.createDelivery(payload), message: "Delivery posted and stock reduced" })} /> : null}
+      {dialog === "delivery" ? !foundationMode && batches.isPending ? <LoadingBlock /> : batches.isError ? <ErrorBlock error={batches.error} /> : <DeliveryForm orders={[order]} deliveries={data.deliveries} batches={batches.data ?? []} canOverride={hasCapability(user, "approve_stock_override")} busy={mutation.isPending} onSubmit={(payload) => mutation.mutate({ run: () => salesService.createDelivery(payload), message: "Delivery posted and stock reduced" })} /> : null}
       {dialog === "invoice" ? <InvoiceForm orders={[order]} deliveries={data.deliveries} invoices={data.invoices} busy={mutation.isPending} onSubmit={(payload) => mutation.mutate({ run: () => salesService.createInvoice(payload), message: "Draft invoice created" })} /> : null}
-      {dialog === "collection" && customer ? accounts.isPending ? <LoadingBlock /> : accounts.isError ? <ErrorBlock error={accounts.error} /> : <CollectionForm initialCustomerId={customer.id} initialOrderId={order.id} customers={[customer]} orders={[order]} invoices={data.invoices} collections={data.collections} accounts={accounts.data} busy={mutation.isPending} onSubmit={(payload) => mutation.mutate({ run: () => salesService.createCollection(payload), message: "Collection posted and balances updated" })} /> : null}
+      {dialog === "collection" && customer ? foundationMode ? <PersistentCollectionForm initialCustomerId={customer.id} initialOrderId={order.id} busy={mutation.isPending} onSubmit={(payload) => mutation.mutate({ run: () => salesService.createCollection(payload), message: "Collection posted and balances updated" })} /> : accounts.isPending ? <LoadingBlock /> : accounts.isError ? <ErrorBlock error={accounts.error} /> : <CollectionForm initialCustomerId={customer.id} initialOrderId={order.id} customers={[customer]} orders={[order]} invoices={data.invoices} collections={data.collections} accounts={accounts.data} busy={mutation.isPending} onSubmit={(payload) => mutation.mutate({ run: () => salesService.createCollection(payload), message: "Collection posted and balances updated" })} /> : null}
       {dialog === "order" ? <OrderReceivingDetailsForm order={order} busy={mutation.isPending} onSubmit={(payload) => mutation.mutate({ run: () => salesService.updateOrder(order.id, payload), message: "Order receiving details saved" })} /> : null}
     </Modal> : null}
     {cancelInvoice ? <Modal open title={`Cancel ${cancelInvoice.invoiceNumber}`} onClose={() => setCancelInvoice(undefined)}><CancelInvoiceForm busy={mutation.isPending} onSubmit={(reason) => mutation.mutate({ run: () => salesService.cancelInvoice(cancelInvoice.id, reason), message: "Invoice cancelled with receivable reversal" })} /></Modal> : null}

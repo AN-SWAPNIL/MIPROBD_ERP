@@ -1,3 +1,4 @@
+import { openWorkspace } from "./workspace-browser.js";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
@@ -22,7 +23,7 @@ export async function reportBackendBrowserSmoke(apiBase: string, email: string, 
       await page.getByLabel("Email", { exact: true }).fill(email); await page.getByLabel("Password", { exact: true }).fill(password);
       const loginResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/auth/login" && response.request().method() === "POST");
       await page.getByRole("button", { name: "Sign In", exact: true }).click(); assert.equal((await loginResponse).status(), 200); await page.waitForURL("**/backend");
-      await page.getByRole("link", { name: "Reports", exact: true }).click(); await page.getByTestId("report-catalogue").waitFor();
+      await openWorkspace(page, "Reports"); await page.getByTestId("report-catalogue").waitFor();
       await page.getByLabel("Search reports").fill("sales summary"); await page.getByRole("button").filter({ hasText: "Sales Summary" }).first().waitFor(); await capture("catalogue");
       await page.goto(`http://localhost:5195/backend/reports/sales-summary?from=${from}&to=${to}&customer=${encodeURIComponent(customerId)}`, { waitUntil: "domcontentloaded" });
       await page.getByRole("button", { name: "Print Preview", exact: true }).waitFor();

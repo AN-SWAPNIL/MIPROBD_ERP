@@ -1,3 +1,4 @@
+import { attachmentAccept } from "../../lib/files/attachments";
 import { useState } from "react";
 import { Save } from "lucide-react";
 import Button from "../../components/ui/Button";
@@ -35,7 +36,7 @@ export function ActivityForm({references,actorId,busy,onSave,row,onUpload}:{row?
     <Field label="Purpose"><textarea className={textareaClass} required minLength={3} maxLength={3000} value={purpose} onChange={(e)=>setPurpose(e.target.value)} /></Field>
     <Field label="Outcome / Details"><textarea className={textareaClass} maxLength={3000} value={remarks} onChange={(e)=>setRemarks(e.target.value)} /></Field>
     <Products references={references} values={products} onChange={setProducts} />
-    <Field label="Private Evidence"><input className="block max-w-full text-sm" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple onChange={(e)=>setFiles(Array.from(e.target.files??[]).slice(0,Math.max(0,5-(row?.attachments.length??0))))} /><small className="mt-2 block text-slate-500">{row?.attachments.map((a)=>a.fileName).join(", ")}</small></Field>
+    <Field label="Private Evidence"><input className="block max-w-full text-sm" type="file" accept={attachmentAccept} multiple onChange={(e)=>setFiles(Array.from(e.target.files??[]).slice(0,Math.max(0,5-(row?.attachments.length??0))))} /><small className="mt-2 block text-slate-500">{row?.attachments.map((a)=>a.fileName).join(", ")}</small></Field>
     {error?<p role="alert" className="text-sm text-red-700">{error}</p>:null}<SaveButton busy={busy||uploading} label={uploading?"Uploading...":"Save Activity"} />
   </form>;
 }

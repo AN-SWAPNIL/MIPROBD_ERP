@@ -6,6 +6,10 @@ export function hasRolePermission(role: Role, permission: PermissionKey, action:
   return Boolean(permissionMatrix[role][permission]?.includes(action));
 }
 
+export function isSuperAdmin(user: User | null | undefined) {
+  return user?.status === "Active" && user.role === "Super Admin";
+}
+
 export function getPermissionOverride(user: User, permission: PermissionKey, action: PermissionAction): PermissionEffect | undefined {
   const matches = (user.permissionOverrides ?? []).filter((override) => override.permission === permission && override.action === action);
   if (matches.some((override) => override.effect === "DENY")) return "DENY";
@@ -15,6 +19,7 @@ export function getPermissionOverride(user: User, permission: PermissionKey, act
 
 export function hasEffectivePermission(user: User | null | undefined, permission: PermissionKey, action: PermissionAction = "view") {
   if (!user || user.status !== "Active") return false;
+  if (isSuperAdmin(user)) return true;
   const override = getPermissionOverride(user, permission, action);
   if (override === "DENY") return false;
   if (override === "ALLOW") return true;
@@ -32,7 +37,7 @@ export function normalizePermissionOverrides(overrides: UserPermissionOverride[]
 }
 
 export function hasCapability(user: User | null | undefined, capability: Capability) {
-  return Boolean(user?.status === "Active" && user.capabilities?.includes(capability));
+  return isSuperAdmin(user) || Boolean(user?.status === "Active" && user.capabilities?.includes(capability));
 }
 
 export function canAccessSettings(user: User | null | undefined) {
@@ -53,7 +58,7 @@ export function canViewEmployeeDirectory(user: User | null | undefined) {
 }
 
 export function canManageUserAccess(user: User | null | undefined) {
-  return Boolean(user?.role === "Super Admin" || hasCapability(user, "manage_user_access"));
+  return isSuperAdmin(user) || hasCapability(user, "manage_user_access");
 }
 
 export function canViewManagedEmployeeActivity(user: User | null | undefined) {
@@ -85,7 +90,7 @@ export function canAssignRole(actor: User, targetRole: Role) {
 
 export function canGrantCapability(actor: User, capability: Capability) {
   if (actor.role === "Super Admin") return true;
-  if (!hasCapability(actor, "manage_user_access") || capability === "manage_user_access") return false;
+  if (!hasCapability(actor, "manage_user_access") || ["manage_user_access", "manage_ledger", "approve_ledger", "view_payroll", "manage_payroll", "approve_payroll", "approve_stock_control"].includes(capability)) return false;
   return hasCapability(actor, capability);
 }
 

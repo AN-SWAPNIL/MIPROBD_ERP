@@ -5,7 +5,7 @@ import type { PersistentColumn } from "../../src/domains/reports/persistentContr
 import { businessDate } from "../../src/lib/date.js";
 import { HttpError } from "../foundation/errors.js";
 
-export const reportFilterKeys = ["salesperson", "customer", "product", "family", "supplier", "employee", "account", "territory", "status", "order", "lead", "captureQuality", "reviewStatus"] as const;
+export const reportFilterKeys = ["salesperson", "customer", "product", "family", "supplier", "employee", "account", "territory", "status", "order", "lead", "captureQuality", "reviewStatus", "stockControl", "returnId", "payrollRun", "supplierClaim"] as const;
 export const queryInput = z.object({
   from: z.iso.date(), to: z.iso.date(), grouping: z.enum(["Daily", "Weekly", "Monthly", "Yearly"]).default("Daily"),
   page: z.coerce.number().int().min(1).max(100000).default(1), pageSize: z.coerce.number().int().min(10).max(100).default(50),

@@ -1,3 +1,4 @@
+import { openWorkspace, signOutWorkspace } from "./workspace-browser.js";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { chromium, expect as baseExpect } from "@playwright/test";
@@ -29,7 +30,7 @@ export async function dashboardBrowserSmoke(apiBase: string, actors: { email: st
         if (actor.role === "Warehouse Manager" || actor.role === "Import Officer") await expect(page.getByTestId("dashboard-trend")).toHaveCount(0);
         else await expect(page.getByTestId("dashboard-trend").getByRole("application")).toBeVisible();
         if (actor.role === "Super Admin") {
-          await page.getByRole("link", { name: "Settings", exact: true }).click();
+          await openWorkspace(page, "Settings");
           await page.getByRole("button", { name: "Operational Settings", exact: true }).click();
           await expect(page.getByLabel("Contact Person", { exact: true })).toBeVisible(); await capture("warehouse-settings");
           await page.getByRole("tab", { name: "Cost Presets", exact: true }).click(); await expect(page.getByRole("button", { name: "Add Preset", exact: true })).toBeVisible();
@@ -43,7 +44,7 @@ export async function dashboardBrowserSmoke(apiBase: string, actors: { email: st
           await expect(row).toContainText("Inactive");
           await page.getByRole("tab", { name: "Client Confirmation Queue", exact: true }).click(); await expect(page.getByRole("heading", { name: "Opening balances and cutover", exact: true })).toBeVisible(); await capture("client-decisions");
         }
-        await page.getByRole("button", { name: "Sign out", exact: true }).click();
+        await signOutWorkspace(page);
       }
       await context.close(); console.log(`Dashboard/settings browser QA passed at ${width}px for all seven roles.`);
     }

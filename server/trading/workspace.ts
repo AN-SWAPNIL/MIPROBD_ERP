@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { collections, customerEntries, deliveries, employees, products, salesInvoices, stockBatches, stockMovements } from "../../database/schema.js";
 import { identity, type Context } from "../foundation/context.js";
 import { assertAllowed, HttpError } from "../foundation/errors.js";
@@ -27,6 +27,12 @@ export function createSalesWorkspaceRouter(ctx: Context) {
         movements = rows.map(({ movement, batch, product }) => ({ id: movement.id, date: movement.date, productId: product.id, productName: product.name, batchId: batch.id, batchNumber: batch.batchNumber, type: movement.type, quantity: movement.quantity, reference: movement.reference, createdBy: movement.createdByName }));
       }
       const workspace = buildSalesOrderWorkspace({ order, quotation, customer, salesperson: owner ? { id: owner.id, name: owner.name, title: owner.title, employeeCode: owner.employeeCode, territory: owner.territory } : undefined, deliveries: delivered, invoices, collections, stockMovements: movements });
+      const returned=(await tx.execute<{productId:string;returned:string;refused:string}>(sql`select dl.product_id "productId",coalesce(sum(l.quantity) filter(where r.kind='Invoiced Return'),0)::text returned,coalesce(sum(l.quantity) filter(where r.kind='Uninvoiced Refusal'),0)::text refused from erp_private.customer_return_lines l join erp_private.customer_returns r on r.id=l.return_id join erp_private.delivery_lines dl on dl.id=l.delivery_line_id where r.order_id=${order.id} and r.state='Posted' group by dl.product_id`)).rows;
+      for(const f of workspace.fulfilment){const value=returned.find((r)=>r.productId===f.productId);f.returnedQty=value?.returned??"0";f.refusedQty=value?.refused??"0";f.deliveredNotInvoicedQty=D.max(0,new D(f.deliveredQty).minus(f.refusedQty).minus(f.approvedInvoicedQty)).toFixed(4);}
+      if(!invoices.some((i)=>i.status==="Draft")&&invoices.some((i)=>i.status==="Approved")&&workspace.fulfilment.every((f)=>new D(f.deliveredNotInvoicedQty).isZero()))workspace.stages.invoice="Complete";
+      workspace.invoiceableDeliveryIds=(await tx.execute<{id:string}>(sql`select d.id from erp_private.deliveries d where d.order_id=${order.id} and not exists(select 1 from erp_private.invoice_deliveries x where x.delivery_id=d.id and x.active) and exists(select 1 from erp_private.delivery_lines dl where dl.delivery_id=d.id and dl.quantity>coalesce((select sum(l.quantity) from erp_private.customer_return_lines l join erp_private.customer_returns r on r.id=l.return_id where l.delivery_line_id=dl.id and r.state='Posted' and r.kind='Uninvoiced Refusal'),0))`)).rows.map((r)=>r.id);
+      if(workspace.totals){workspace.totals.outstandingValue=D.max(0,order.due).toFixed(2);workspace.totals.collectedValue=order.amountReceived;const adjusted=await tx.select({id:customerEntries.id}).from(customerEntries).where(and(eq(customerEntries.orderId,order.id),inArray(customerEntries.type,["Return Credit","Return Refund","Credit Transfer In","Credit Transfer Out"]))).limit(1);if(adjusted.length)workspace.stages.collection=new D(order.due).lte(0)?"Settled":new D(order.amountReceived).gt(0)?"Partial":"Unpaid";}
+      if(delivered.length&&!invoices.some((i)=>i.status!=="Cancelled")&&workspace.fulfilment.every((f)=>new D(f.deliveredQty).eq(f.refusedQty??"0"))){workspace.stages.invoice="Not Required";workspace.stages.collection="Not Required";}
       return user.role === "Warehouse Manager" ? restrictWorkspaceFinancials(workspace) : workspace;
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
     res.json({ success: true, data, message: "Order lifecycle derived from persistent postings" });

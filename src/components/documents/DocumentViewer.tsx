@@ -1,17 +1,20 @@
 import { useEffect, useState } from "react";
-import { Download, ExternalLink, FileImage, FileText, LoaderCircle, X } from "lucide-react";
+import { Download, ExternalLink, FileImage, FileSpreadsheet, FileText, LoaderCircle, X } from "lucide-react";
 import Button from "../ui/Button";
 import type { DocumentRecord, DocumentUpload } from "../../domains/erp.types";
 import { fileService } from "../../domains/services";
+import { attachmentMime, attachmentLabel, hasDocumentPreview, officeMimes } from "../../lib/files/attachments";
+import { foundationMode } from "../../lib/runtime";
 
 export function readDocumentUpload(file: File): Promise<DocumentUpload> {
   if (file.size > 5_000_000) return Promise.reject(new Error("Attachment must be 5 MB or smaller."));
-  if (!["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) return Promise.reject(new Error("Select a PDF, PNG, JPEG, WebP or GIF file."));
+  let mimeType:string;
+  try{mimeType=attachmentMime(file.name,file.type,!foundationMode);}catch(error){return Promise.reject(error);}
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("The selected file could not be read."));
-    reader.onload = () => resolve({ fileName: file.name, mimeType: file.type, sizeBytes: file.size, fileDataUrl: String(reader.result) });
-    reader.readAsDataURL(file);
+    reader.onload = () => resolve({ fileName: file.name, mimeType, sizeBytes: file.size, fileDataUrl: String(reader.result) });
+    reader.readAsDataURL(new Blob([file],{type:mimeType}));
   });
 }
 
@@ -57,6 +60,8 @@ export default function DocumentViewer({ document, onClose }: { document: Docume
 
   if (!document) return null;
   const isImage = document.mimeType.startsWith("image/");
+  const previewable = hasDocumentPreview(document.mimeType);
+  const spreadsheet = [officeMimes.xlsx,"text/csv"].includes(document.mimeType);
   const download = () => {
     if (!objectUrl) return;
     const link = window.document.createElement("a");
@@ -76,7 +81,7 @@ export default function DocumentViewer({ document, onClose }: { document: Docume
             <p className="mt-0.5 truncate text-xs text-slate-500">{document.documentType} | {formatBytes(document.sizeBytes)} | Uploaded by {document.createdByName}</p>
           </div>
           <div className="hidden shrink-0 gap-2 sm:flex">
-            <Button icon={<ExternalLink className="h-4 w-4" />} disabled={!objectUrl} onClick={() => objectUrl && window.open(objectUrl, "_blank", "noopener,noreferrer")}>Open in New Tab</Button>
+            {previewable?<Button icon={<ExternalLink className="h-4 w-4" />} disabled={!objectUrl} onClick={() => objectUrl && window.open(objectUrl, "_blank", "noopener,noreferrer")}>Open in New Tab</Button>:null}
             <Button icon={<Download className="h-4 w-4" />} disabled={!objectUrl} onClick={download}>Download</Button>
           </div>
           <button className="rounded p-2 text-slate-500 hover:bg-slate-100" type="button" onClick={onClose} aria-label="Close document viewer" title="Close"><X className="h-5 w-5" /></button>
@@ -84,10 +89,10 @@ export default function DocumentViewer({ document, onClose }: { document: Docume
         <div className="min-h-0 flex-1 bg-slate-100 p-2 sm:p-4">
           {loading ? <div className="grid h-full place-items-center"><div className="text-center text-sm font-semibold text-slate-500"><LoaderCircle className="mx-auto mb-2 h-6 w-6 animate-spin text-cyan-700" />Loading protected preview...</div></div> : null}
           {error ? <div className="grid h-full place-items-center"><div className="max-w-md rounded-md border border-red-200 bg-red-50 p-5 text-center"><FileText className="mx-auto h-8 w-8 text-red-400" /><strong className="mt-2 block text-sm text-red-800">Preview unavailable</strong><p className="mt-1 text-xs leading-5 text-red-700">{error}</p></div></div> : null}
-          {!loading && !error && objectUrl ? isImage ? <div className="grid h-full place-items-center overflow-auto"><img className="max-h-full max-w-full rounded-sm bg-white object-contain shadow" src={objectUrl} alt={document.fileName} /></div> : <iframe className="h-full w-full rounded-sm border-0 bg-white shadow" src={objectUrl} title={document.fileName} /> : null}
+          {!loading && !error && objectUrl ? isImage ? <div className="grid h-full place-items-center overflow-auto"><img className="max-h-full max-w-full rounded-sm bg-white object-contain shadow" src={objectUrl} alt={document.fileName} /></div> : previewable ? <iframe className="h-full w-full rounded-sm border-0 bg-white shadow" src={objectUrl} title={document.fileName} /> : <div className="grid h-full place-items-center p-4"><div className="min-w-0 max-w-md space-y-3 text-center">{spreadsheet?<FileSpreadsheet className="mx-auto h-12 w-12 text-emerald-700"/>:<FileText className="mx-auto h-12 w-12 text-blue-800"/>}<h3 className="break-words text-base font-bold text-blue-950">{attachmentLabel(document.mimeType)}</h3><p className="text-sm text-slate-600">Preview unavailable for this format.</p><Button variant="primary" icon={<Download className="h-4 w-4"/>} onClick={download}>Download File</Button></div></div> : null}
         </div>
         <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-2 sm:hidden">
-          <Button icon={<ExternalLink className="h-4 w-4" />} disabled={!objectUrl} onClick={() => objectUrl && window.open(objectUrl, "_blank", "noopener,noreferrer")} aria-label="Open in new tab" title="Open in new tab" />
+          {previewable?<Button icon={<ExternalLink className="h-4 w-4" />} disabled={!objectUrl} onClick={() => objectUrl && window.open(objectUrl, "_blank", "noopener,noreferrer")} aria-label="Open in new tab" title="Open in new tab" />:null}
           <Button icon={<Download className="h-4 w-4" />} disabled={!objectUrl} onClick={download}>Download</Button>
           <Button onClick={onClose}>Close</Button>
         </footer>

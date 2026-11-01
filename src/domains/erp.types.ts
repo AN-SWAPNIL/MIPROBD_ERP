@@ -27,9 +27,15 @@ export type Capability =
   | "approve_stock_override"
   | "manage_users"
   | "manage_user_access"
-  | "approve_special_price";
+  | "approve_special_price"
+  | "manage_ledger"
+  | "approve_ledger"
+  | "view_payroll"
+  | "manage_payroll"
+  | "approve_payroll"
+  | "approve_stock_control";
 
-export type DocumentEntityType = "import" | "import-cost" | "expense" | "marketing-activity" | "field-visit" | "lead";
+export type DocumentEntityType = "import" | "import-cost" | "expense" | "marketing-activity" | "field-visit" | "lead" | "quality";
 export type DocumentSource = "UPLOADED" | "GENERATED";
 
 export type DocumentRecord = {
@@ -41,6 +47,7 @@ export type DocumentRecord = {
   fileName: string;
   mimeType: string;
   sizeBytes?: number;
+  sha256?: string;
   previewUrl: string;
   sensitive: boolean;
   notes?: string;
@@ -89,7 +96,9 @@ export type SupplierSettlement = PostedReversal & {
   supplierName: string;
   importId?: string;
   reference: string;
-  entryType: "Obligation" | "Payment";
+  entryType: "Obligation" | "Payment" | "Opening Advance" | "Credit";
+  supplierClaimId?: string;
+  openingPositionId?: string;
   amount: DecimalString;
   accountId?: string;
   accountName?: string;
@@ -294,7 +303,7 @@ export type StockBatch = {
   productId: string;
   productCode: string;
   productName: string;
-  sourceImportId: string;
+  sourceImportId?: string;
   sourceReference: string;
   lotNumber: string;
   batchNumber: string;
@@ -303,10 +312,14 @@ export type StockBatch = {
   receivedDate: string;
   quantityReceived: DecimalString;
   quantityAvailable: DecimalString;
+  heldQuantity?: DecimalString;
+  eligibleQuantity?: DecimalString;
   warehouse: string;
   location?: string;
   landedCostPerUnit: DecimalString;
-  sourceType?: "Import Receipt" | "Opening Stock";
+  sourceType?: "Import Receipt" | "Opening Stock" | "Stock Correction" | "Customer Return" | "Supplier Replacement";
+  availableFromDate?: string;
+  condition?: "Saleable" | "Quarantine" | "Damaged" | "Expired";
   expiryStatus?: "Expired" | "1 Month Alert" | "3 Month Alert" | "6 Month Alert" | "Normal";
 };
 
@@ -317,7 +330,8 @@ export type StockMovement = {
   productName: string;
   batchId: string;
   batchNumber: string;
-  type: "Receive" | "Dispatch" | "Return" | "Adjustment";
+  type: "Receive" | "Opening" | "Dispatch" | "Return" | "Adjustment" | "Supplier Return";
+  quantityDelta?: DecimalString;
   quantity: DecimalString;
   reference: string;
   reason?: string;
@@ -489,6 +503,7 @@ export type SalesOrderWorkspace = {
   customer?: Customer;
   salesperson?: { id: string; name: string; employeeCode?: string; title?: string; territory?: string };
   financialVisible: boolean;
+  invoiceableDeliveryIds?: string[];
   deliveries: Delivery[];
   invoices: SalesInvoice[];
   collections: Collection[];
@@ -497,6 +512,7 @@ export type SalesOrderWorkspace = {
     productId: string; productCode: string; productName: string;
     orderedQty: DecimalString; deliveredQty: DecimalString; draftInvoicedQty: DecimalString;
     approvedInvoicedQty: DecimalString; remainingToDeliverQty: DecimalString; deliveredNotInvoicedQty: DecimalString;
+    returnedQty?: DecimalString; refusedQty?: DecimalString;
   }>;
   totals?: {
     orderValue: DecimalString; deliveredValue: DecimalString; draftInvoiceValue: DecimalString;
@@ -506,8 +522,8 @@ export type SalesOrderWorkspace = {
     quotation: "Complete" | "Direct";
     order: "Active" | "Cancelled";
     delivery: "Not Started" | "Partial" | "Complete";
-    invoice?: "Not Started" | "Draft Pending" | "Partial" | "Complete";
-    collection?: "Not Due" | "Unpaid" | "Partial" | "Paid";
+    invoice?: "Not Started" | "Draft Pending" | "Partial" | "Complete" | "Not Required";
+    collection?: "Not Due" | "Unpaid" | "Partial" | "Paid" | "Settled" | "Not Required";
   };
 };
 
@@ -555,7 +571,7 @@ export type AccountTransaction = {
   accountName: string;
   direction: "In" | "Out";
   amount: DecimalString;
-  sourceType: "Collection" | "Expense" | "Supplier Payment" | "Import Cost" | "Opening Balance" | "Advance" | "Company Loan" | "Manual Authorized";
+  sourceType: "Collection" | "Expense" | "Supplier Payment" | "Import Cost" | "Opening Balance" | "Advance" | "Company Loan" | "Manual Authorized" | "Return Refund" | "Payroll Payment" | "Payroll Advance" | "Payroll Loan";
   sourceId: string;
   description: string;
   partyId?: string;
@@ -612,7 +628,7 @@ export type ProductAlias = {
 export type CustomerLedgerEntry = {
   id: string;
   date: string;
-  type: "Opening Due" | "Legacy Delivery" | "Invoice" | "Collection" | "Reversal";
+  type: "Opening Due" | "Legacy Delivery" | "Invoice" | "Collection" | "Reversal" | "Return Credit" | "Return Refund" | "Credit Transfer In" | "Credit Transfer Out";
   reference: string;
   debit: DecimalString;
   credit: DecimalString;

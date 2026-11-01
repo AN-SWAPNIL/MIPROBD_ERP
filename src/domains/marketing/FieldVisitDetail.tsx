@@ -3,7 +3,7 @@ import { Camera, Check, MapPin, Pencil, X } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import Button from "../../components/ui/Button";
 import { useAuthStore } from "../../lib/auth/session";
-import { hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
+import { hasEffectivePermission, isSuperAdmin } from "../../lib/permissions/effectiveAccess";
 import { ErrorBlock, LoadingBlock } from "../components";
 import { ReasonForm, titleCase } from "./WorkforceForms";
 import { VisitSiteForm } from "./VisitSettingsForms";
@@ -38,7 +38,7 @@ export default function FieldVisitDetail({ id }: { id: string }) {
     <div>{v.photoId ? <Button icon={<Camera className="h-4 w-4" />} onClick={() => void openPhoto()}>Open Private Photo</Button> : <p>No photo: {v.photoReason}</p>}{v.photoId ? <p className="mt-1 text-xs text-slate-500">{titleCase(v.photoMethod)} is a source claim, not camera attestation.</p> : null}{photoError ? <ErrorBlock error={photoError} /> : null}</div>
     {v.status !== "Voided" ? <div className="flex flex-wrap gap-2">
       {own && editable && v.status === "CheckedIn" ? <Button variant="primary" icon={<Check className="h-4 w-4" />} onClick={() => setMode("complete")}>Complete Visit</Button> : null}
-      {!own && approve ? <><Button icon={<Check className="h-4 w-4" />} onClick={() => setMode("accept")}>Accept for Review</Button><Button variant="danger" icon={<X className="h-4 w-4" />} onClick={() => setMode("reject")}>Reject for Review</Button></> : null}
+      {(!own || isSuperAdmin(actor)) && approve ? <><Button icon={<Check className="h-4 w-4" />} onClick={() => setMode("accept")}>Accept for Review</Button><Button variant="danger" icon={<X className="h-4 w-4" />} onClick={() => setMode("reject")}>Reject for Review</Button></> : null}
       {(own && editable) || approve ? <Button variant="danger" icon={<X className="h-4 w-4" />} onClick={() => setMode("void")}>Void Visit</Button> : null}
       {approve && v.customerId && hasEffectivePermission(actor, "customers") ? <Button icon={<MapPin className="h-4 w-4" />} onClick={() => setMode("site")}>Customer Site Reference</Button> : null}
     </div> : null}

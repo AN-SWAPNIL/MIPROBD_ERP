@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { eq,sql } from "drizzle-orm";
+import { payrollLines } from "../../database/schema.js";
+import type { Transaction } from "../../database/client.js";
+import type { hostedHarness } from "../testing/hosted.js";
+import { compensationScheduleSchema,payrollPolicySchema,payrollRunSchema,type PayrollPolicyData } from "../../src/domains/payroll/contracts.js";
+import { PersistentReportSchema } from "../../src/domains/reports/persistentContracts.js";
+type Person={id:string;token:string};
+export async function checkSplitPayroll(h:Awaited<ReturnType<typeof hostedHarness>>,tx:Transaction,actors:{maker:Person;finance:Person;person:Person;verifier:Person;approver:Person},profile:Extract<PayrollPolicyData,{kind:"Compensation"}>["data"],staleId:string,bankId:string,authorize:(id:string,preparer:Person)=>Promise<void>){
+ const{maker,finance,person}=actors;
+ const policy=payrollPolicySchema.parse(await h.expect("/payroll/policies",finance.token,{kind:"Compensation",employeeId:person.id,effectiveFrom:"2026-10-16",proofReference:"DEV TEST MID-MONTH PAY CHANGE",data:{...profile,basic:"200",overtimeRate:"5"}},201,h.key("split-profile")));
+ await authorize(policy.approvalId,finance);await h.expect(`/payroll/policies/${policy.id}/activate`,finance.token,{version:policy.version});
+ const schedule=compensationScheduleSchema.parse(await h.expect(`/payroll/compensation-periods?employeeId=${person.id}&period=2026-10`,finance.token));assert.deepEqual(schedule.periods.map(p=>[p.from,p.to]),[["2026-10-01","2026-10-15"],["2026-10-16","2026-10-31"]]);
+ await h.expect(`/payroll/compensation-periods?employeeId=${person.id}&period=2026-10`,person.token,undefined,403);await h.expect(`/payroll/compensation-periods?employeeId=${person.id}&period=1999-10`,maker.token,undefined,422);
+ const source=payrollRunSchema.parse(await h.expect(`/payroll/runs/${staleId}`,maker.token));await h.expect(`/payroll/runs/${staleId}/submit`,maker.token,{version:source.version},409);
+ const line={...source.lines[0].snapshot.input,bonus:"0",overtimeHours:"3",otherDeduction:"0",recoveries:[],compensationSegments:schedule.periods.map((p,i)=>({profileId:p.profileId,salaryFactor:"0.5",overtimeHours:i?"2":"1",earningsProof:`DEV TEST PERIOD ${p.from}`}))};
+ const input={period:"2026-10",reason:"DEV TEST approved split compensation",proofReference:"DEV TEST SPLIT PR",lines:[line]};
+ const{compensationSegments:_segments,...legacy}=line;void _segments;
+ await h.expect("/payroll/runs",maker.token,{...input,lines:[legacy]},422,h.key("no-split"));await h.expect("/payroll/runs",maker.token,{...input,lines:[{...line,compensationSegments:line.compensationSegments.slice(0,1)}]},422,h.key("missing-split"));
+ let run=payrollRunSchema.parse(await h.expect("/payroll/runs",maker.token,input,201,h.key("split-run")));const snap=run.lines[0].snapshot;assert.equal(snap.compensationParts?.length,2);assert.equal(snap.math.fixedGross,"180.00");assert.equal(snap.math.overtime,"12.50");assert.equal(run.net,"167.50");
+ const [saved]=await tx.select().from(payrollLines).where(eq(payrollLines.id,run.lines[0].id));
+ for(const changed of [{...saved.snapshot,compensationParts:saved.snapshot.compensationParts!.map((p,i)=>i?{...p,from:"2026-10-15"}:p)},{...saved.snapshot,compensationParts:saved.snapshot.compensationParts!.map((p,i)=>i?{...p,components:{...p.components,basic:"101.00"}}:p)}])await assert.rejects(tx.transaction(t=>t.insert(payrollLines).values({...saved,id:`test-split-${randomUUID()}`,snapshot:changed})));
+ const [{fixed}]=(await tx.execute<{fixed:string}>(sql`select erp_private.payroll_earned_snapshot(${person.id},'2026-10',${JSON.stringify(saved.snapshot.input)}::jsonb,${JSON.stringify(saved.snapshot.compensationParts)}::jsonb,${JSON.stringify(saved.snapshot.preparerIds)}::jsonb)->'components'->>'basic' fixed`)).rows;assert.ok(Number(fixed)===150);
+ run=payrollRunSchema.parse(await h.expect(`/payroll/runs/${run.id}/submit`,maker.token,{version:run.version}));await authorize(run.approvalId!,maker);run=payrollRunSchema.parse(await h.expect(`/payroll/runs/${run.id}/accrue`,finance.token,{version:run.version}));await h.expect(`/payroll/runs/${run.id}/accrue`,finance.token,{version:run.version-1},200,{instance:1});
+ const requested=payrollRunSchema.parse(await h.expect("/payroll/payments",finance.token,{lineId:run.lines[0].id,accountId:bankId,amount:run.net,reason:"DEV TEST actual split salary payment",proofReference:"DEV TEST SPLIT PAYMENT"},201,h.key("split-payment"))),payment=requested.payments.at(-1)!;
+ await authorize(payment.approvalId,finance);const paid=payrollRunSchema.parse(await h.expect(`/payroll/payments/${payment.id}/post`,finance.token,{version:payment.version}));assert.equal(paid.lines[0].outstanding,"0.00");
+ const slip=PersistentReportSchema.parse(await h.expect(`/payroll/slips/${run.lines[0].id}/print`,person.token));assert.equal(slip.totals.amount,"167.50");assert.ok(slip.rows.some(r=>r.detail.includes("2026-10-01 to 2026-10-15")));assert.ok(slip.rows.some(r=>r.detail.includes("2026-10-16 to 2026-10-31")));assert.ok(!JSON.stringify(slip).includes(profile.payeeAccount));
+ const params=`from=${run.postedDate}&to=${run.postedDate}&employee=${person.id}&payrollRun=${run.id}`;const report=PersistentReportSchema.parse(await h.expect(`/reports/payroll-register?${params}`,finance.token)),print=PersistentReportSchema.parse(await h.expect(`/reports/payroll-register/print?${params}`,finance.token));assert.deepEqual(report.rows,print.rows);assert.ok(report.rows.some(r=>r.net==="167.50"));
+ return run;
+}

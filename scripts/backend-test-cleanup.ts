@@ -7,7 +7,7 @@ async function main() {
   const ctx = createContext();
   const apply = process.argv.includes("--apply");
   const suite=process.argv.find((arg)=>arg.startsWith("--suite="))?.slice(8);
-  if(suite&&!['visit','dashboard','security'].includes(suite))throw new Error("Use an explicitly supported test suite selector.");
+  if(suite&&!['visit','dashboard','security','postings','outbox','paging','opening','openingpost','open-browser','restricted','sales-overview','update13-browser','sales-read-browser','sales-read','sales-flow','ledger','glrace','stock-holds','ledger-layout','stock-controls','returns','payroll','supplier-claims'].includes(suite))throw new Error("Use an explicitly supported test suite selector.");
   try {
     const { data, error } = await ctx.admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (error) throw new Error("Cannot inspect test identities");

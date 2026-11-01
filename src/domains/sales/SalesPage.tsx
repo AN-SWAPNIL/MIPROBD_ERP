@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getSalesOverview } from "./overview";
 import Decimal from "decimal.js";
 import {
   ArrowRight,
@@ -99,19 +100,28 @@ export default function SalesPage() {
   const canEditCustomer = hasEffectivePermission(session?.user, "customers", "edit");
   const canDeleteCustomer = hasEffectivePermission(session?.user, "customers", "delete");
   const canPrint = hasEffectivePermission(session?.user, "print", "view");
-  const customersQuery = useQuery({ queryKey: ["sales", "customers", session?.user.id], queryFn: salesService.customers, enabled: canViewCustomers });
-  const quotationsQuery = useQuery({ queryKey: ["sales", "quotations", session?.user.id], queryFn: salesService.quotations, enabled: canViewFinancialSales });
-  const ordersQuery = useQuery({ queryKey: ["sales", "orders", session?.user.id], queryFn: salesService.orders, enabled: canViewSales });
-  const deliveriesQuery = useQuery({ queryKey: ["sales", "deliveries", session?.user.id], queryFn: salesService.deliveries, enabled: canViewSales });
-  const invoicesQuery = useQuery({ queryKey: ["sales", "invoices", session?.user.id], queryFn: salesService.invoices, enabled: canViewFinancialSales });
-  const collectionsQuery = useQuery({ queryKey: ["sales", "collections", session?.user.id], queryFn: salesService.collections, enabled: canViewFinancialSales });
-  const productsQuery = useQuery({ queryKey: ["products"], queryFn: settingsService.products, enabled: canViewSales });
-  const batchesQuery = useQuery({ queryKey: ["inventory", "batches"], queryFn: inventoryService.batches, enabled: canDispatch });
-  const accountsQuery = useQuery({ queryKey: ["sales", "payment-accounts"], queryFn: salesService.paymentAccounts, enabled: canCollect });
+  const overview = useQuery({ queryKey: ["sales", "overview", session?.user.id], queryFn: ({ signal }) => getSalesOverview(signal), enabled: foundationMode });
+  const legacyCustomers = useQuery({ queryKey: ["sales", "customers", session?.user.id], queryFn: salesService.customers, enabled: canViewCustomers && !foundationMode });
+  const legacyQuotations = useQuery({ queryKey: ["sales", "quotations", session?.user.id], queryFn: salesService.quotations, enabled: canViewFinancialSales && !foundationMode });
+  const legacyOrders = useQuery({ queryKey: ["sales", "orders", session?.user.id], queryFn: salesService.orders, enabled: canViewSales && !foundationMode });
+  const legacyDeliveries = useQuery({ queryKey: ["sales", "deliveries", session?.user.id], queryFn: salesService.deliveries, enabled: canViewSales && !foundationMode });
+  const legacyInvoices = useQuery({ queryKey: ["sales", "invoices", session?.user.id], queryFn: salesService.invoices, enabled: canViewFinancialSales && !foundationMode });
+  const legacyCollections = useQuery({ queryKey: ["sales", "collections", session?.user.id], queryFn: salesService.collections, enabled: canViewFinancialSales && !foundationMode });
+  const legacyProducts = useQuery({ queryKey: ["products"], queryFn: settingsService.products, enabled: canViewSales && !foundationMode });
+  const customersQuery = foundationMode ? { ...overview, data: overview.data?.customers } : legacyCustomers;
+  const quotationsQuery = foundationMode ? { ...overview, data: overview.data?.quotations } : legacyQuotations;
+  const ordersQuery = foundationMode ? { ...overview, data: overview.data?.orders } : legacyOrders;
+  const deliveriesQuery = foundationMode ? { ...overview, data: overview.data?.deliveries } : legacyDeliveries;
+  const invoicesQuery = foundationMode ? { ...overview, data: overview.data?.invoices } : legacyInvoices;
+  const collectionsQuery = foundationMode ? { ...overview, data: overview.data?.collections } : legacyCollections;
+  const productsQuery = foundationMode ? { ...overview, data: overview.data?.products } : legacyProducts;
+  const batchesQuery = useQuery({ queryKey: ["inventory", "batches"], queryFn: inventoryService.batches, enabled: canDispatch && !foundationMode });
+  const legacyAccounts = useQuery({ queryKey: ["sales", "payment-accounts"], queryFn: salesService.paymentAccounts, enabled: canCollect && !foundationMode });
+  const accountsQuery = foundationMode ? { ...overview, data: overview.data?.accounts } : legacyAccounts;
   const ledgerQuery = useQuery({ queryKey: ["sales", "customer-ledger", ledgerCustomer?.id], queryFn: () => salesService.customerLedger(ledgerCustomer!.id), enabled: Boolean(ledgerCustomer) });
   const recommendationsQuery = useQuery({ queryKey: ["ai", "sales", session?.user.id], queryFn: () => aiService.recommendations({ route: "/app/sales", entityType: "sales" }), enabled: !foundationMode && role !== "Warehouse Manager" });
 
-  const queries = [...(canViewCustomers ? [customersQuery] : []), ...(canViewFinancialSales ? [quotationsQuery, invoicesQuery, collectionsQuery] : []), ...(canViewSales ? [ordersQuery, deliveriesQuery, productsQuery] : []), ...(canDispatch ? [batchesQuery] : []), ...(canCollect ? [accountsQuery] : [])];
+  const queries = [...(canViewCustomers ? [customersQuery] : []), ...(canViewFinancialSales ? [quotationsQuery, invoicesQuery, collectionsQuery] : []), ...(canViewSales ? [ordersQuery, deliveriesQuery, productsQuery] : []), ...(canDispatch && !foundationMode ? [batchesQuery] : []), ...(canCollect ? [accountsQuery] : [])];
   const error = queries.find((query) => query.error)?.error;
   const loading = queries.some((query) => query.isLoading);
   const refresh = () => Promise.all(["sales", "inventory", "dashboard", "accounts", "marketing"].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
@@ -209,6 +219,7 @@ export default function SalesPage() {
         subtitle={view === "marketing" ? "Employee activity, leads, follow-ups, plans and targets." : "Customer ledger, quotation, order, actual batch delivery and collection remain connected without re-entering line items."}
         actions={
           <>
+            {foundationMode && canViewSales ? <Button icon={<RotateCcw className="h-4 w-4"/>} onClick={()=>navigate("/backend/returns")}>Returns & Credits</Button>:null}
             {canViewReports && view !== "marketing" ? <Button icon={<FileBarChart className="h-4 w-4" />} onClick={() => navigate(`/app/reports/${view === "customers" ? "customer-ledger" : view === "orders" ? "sales-order-register" : view === "deliveries" ? "delivery-challan-register" : "collections"}`)}>Open Report</Button> : null}
             {view === "customers" && canCreateCustomer ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => { setEditingCustomer(undefined); setModal("customer"); }}>New Customer</Button> : null}
             {view === "orders" && canCreateQuote ? <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => { setEditingQuotation(undefined); setModal("quotation"); }}>New Quotation</Button> : null}

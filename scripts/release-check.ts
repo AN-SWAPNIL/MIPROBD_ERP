@@ -7,6 +7,13 @@ import { resolveBackendMode } from "../server/runtime-mode.js";
 const root = new URL("../", import.meta.url);
 const json = async (path: string) => JSON.parse(await readFile(new URL(path, root), "utf8"));
 const config = await json("vercel.json");
+const rootTypes = await json("tsconfig.json");
+assert.equal(rootTypes.compilerOptions.target,"ES2022","The separate Vercel API compiler must support the deployed Node runtime");
+assert.equal(rootTypes.compilerOptions.strict,true,"Vercel API compilation must keep strict DTO inference");
+assert.equal(rootTypes.compilerOptions.moduleResolution,"NodeNext");
+const ignored=await readFile(new URL(".vercelignore",root),"utf8");
+for(const path of[".env",".env.*","/artifacts","/files"])assert.ok(ignored.split(/\r?\n/).includes(path),`${path} must not be uploaded`);
+assert.ok(!ignored.split(/\r?\n/).includes("files"),"Client source exclusions must be root-anchored, not exclude src/lib/files");
 assert.deepEqual(config.rewrites[0], { source: "/api/:path*", destination: "/api?path=:path*" }, "API rewrite must precede SPA fallback");
 assert.equal(config.rewrites.at(-1).destination, "/index.html");
 const headers = new Map<string, string>(config.headers.find((r: { source: string }) => r.source === "/(.*)").headers.map((h: { key: string; value: string }) => [h.key, h.value]));
@@ -31,6 +38,8 @@ assert.ok(!tracked.some((path) => /(^|\/)\.env($|\.(?!example$|sample$))/.test(p
 assert.equal(resolveBackendMode({ NODE_ENV: "production", ERP_BACKEND_MODE: "foundation", VITE_BACKEND_MODE: "foundation", DEMO_MODE: "false", VITE_DEMO_MODE: "false" }), "foundation");
 assert.throws(() => resolveBackendMode({ NODE_ENV: "production", ERP_BACKEND_MODE: "mock" }));
 console.log("PASS: production mode isolation and credential/artifact hygiene");
+const workbookReader=await readFile(new URL("server/opening/excel-reader.ts",root),"utf8");
+assert.match(workbookReader,/from "exceljs\/dist\/exceljs\.bare\.js"/,"The buffer-only XLSX runtime must use a statically traceable dependency import");
 
 const journal = await json("database/migrations/meta/_journal.json");
 assert.equal(new Set(journal.entries.map((entry: { tag: string }) => entry.tag)).size, journal.entries.length);

@@ -3,8 +3,8 @@
 project_id = "mipro-erp-dev"
 
 [auth]
-site_url = "http://localhost:5178"
-additional_redirect_urls = ["http://localhost:5178/reset-password", "http://localhost:5173/reset-password"]
+site_url = "https://mipro-erp-staging.vercel.app"
+additional_redirect_urls = ["http://localhost:5178/reset-password", "http://localhost:5173/reset-password", "https://mipro-erp-staging.vercel.app/reset-password"]
 enable_signup = false
 minimum_password_length = 12
 

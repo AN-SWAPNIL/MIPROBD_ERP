@@ -393,10 +393,16 @@ export const fileService = {
   },
   async open(document: DocumentRecord) {
     if (foundationMode) {
-      const result = await apiRequest<{ url: string }>(`/api/documents/${encodeURIComponent(document.id)}`);
+      const result = await apiRequest<{ url: string; sha256?:string|null;sizeBytes?:number }>(`/api/documents/${encodeURIComponent(document.id)}`);
       const file = await fetch(result.data.url);
       if (!file.ok) throw new Error("Document read failed.");
-      return file.blob();
+      const blob = await file.blob();
+      const expectedHash=document.sha256??result.data.sha256,expectedSize=document.sizeBytes??result.data.sizeBytes;
+      if (expectedHash) {
+        const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer())), b => b.toString(16).padStart(2, "0")).join("");
+        if (hash !== expectedHash || expectedSize !== undefined && blob.size !== expectedSize) throw new Error("This file no longer matches the saved document. Contact an administrator.");
+      }
+      return blob;
     }
     const response = await fetch(API_BASE_URL + `/api/documents/${encodeURIComponent(document.id)}/content`, { headers: await headers() });
     if (!response.ok) {

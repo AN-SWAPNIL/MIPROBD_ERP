@@ -19,3 +19,6 @@ Thumbs.db
 .vercel
 supabase/.temp/
 .env*
+
+# Client financial source: retain locally, never publish with application code.
+/files/Stock, Delivery, Due list.xlsx

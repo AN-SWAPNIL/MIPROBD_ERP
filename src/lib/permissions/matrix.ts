@@ -9,9 +9,9 @@ import {
   UsersRound
 } from "lucide-react";
 import type { ComponentType } from "react";
-import type { PermissionKey } from "../../types";
-export { permissionMatrix } from "./definitions";
-export { hasCapability, hasEffectivePermission, hasRolePermission } from "./effectiveAccess";
+import type { PermissionKey } from "../../types/index.js";
+export { permissionMatrix } from "./definitions.js";
+export { hasCapability, hasEffectivePermission, hasRolePermission } from "./effectiveAccess.js";
 
 export type NavItem = {
   label: string;

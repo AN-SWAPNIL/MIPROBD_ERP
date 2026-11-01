@@ -1,3 +1,4 @@
+import { signOutWorkspace } from "./workspace-browser.js";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
@@ -91,11 +92,11 @@ export async function financeBackendBrowserSmoke(apiBase: string, email: string,
       await dialog.getByLabel("Description", { exact: true }).fill(reference);
       const voucher = await posted(page, "/account-transactions", () => dialog.getByRole("button", { name: "Post Debit Voucher", exact: true }).click()); await dialog.waitFor({ state: "hidden" });
       await reverse("account-transactions", voucher.id, `Reverse ${voucher.voucherNumber}`); await capture("vouchers");
-      await page.getByRole("button", { name: "Sign out", exact: true }).click(); await page.waitForURL("**/login");
+      await signOutWorkspace(page); await page.waitForURL("**/login");
       await login(mdEmail); await page.getByRole("link", { name: "Expenses & Accounts", exact: true }).click();
       await page.getByRole("heading", { name: "Expenses & Accounts", exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: "Post Expense", exact: true }).count(), 0); await capture("md-readonly");
-      await page.getByRole("button", { name: "Sign out", exact: true }).click(); await page.waitForURL("**/login"); await login(salesEmail);
+      await signOutWorkspace(page); await page.waitForURL("**/login"); await login(salesEmail);
       assert.equal(await page.getByRole("link", { name: "Expenses & Accounts", exact: true }).count(), 0);
       await page.goto(`${origin}/backend/accounts`, { waitUntil: "domcontentloaded" }); await page.getByRole("heading", { name: "Access denied", exact: true }).waitFor();
       assert.deepEqual(errors, [], requests.join("\n")); await page.close(); console.log(`Persisted finance browser ${name}: expense/evidence, supplier, position, voucher and role boundaries passed.`);

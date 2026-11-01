@@ -65,7 +65,7 @@ test("expired employee invitations can be retried without changing their linked 
   await assert.rejects(deliverInvitation(ctx, employee), /administrator review/);
   assert.equal(invites, 1);
   deliveryFails = true;
-  assert.deepEqual(await deliverInvitation(ctx, { ...employee, authUserId: null }), { sent: false, authUserId: null });
+  assert.deepEqual(await deliverInvitation(ctx, { ...employee, authUserId: null }), { sent: false, authUserId: null, retryable: true, failureCode: "DELIVERY_FAILED" });
 });
 
 test("hosted foundation: real auth, persisted profiles, access revocation, private storage and append-only audit", { skip: process.env.RUN_HOSTED_BACKEND_TESTS !== "true", timeout: 180000 }, async () => {

@@ -46,8 +46,8 @@ export async function readDashboard(tx: Transaction, user: User, period: z.infer
       coalesce((select jsonb_agg(jsonb_build_object('date',d::date::text,'sales',coalesce(s.sales,0)::text,'collections',coalesce(s.collections,0)::text) order by d)
       from generate_series(${q.from}::date,${q.to}::date,interval '1 day') d left join summary s on s.date=d::date::text),'[]'::jsonb) trend from summary`)).rows;
     trend = result.trend;
-    metric("sales", "Net Invoiced Sales", result.sales, "money", "Selected period; approved invoices less dated cancellations", "/backend/sales?view=orders");
-    metric("collections", "Net Collections", result.collections, "money", "Selected period; allocated receipts less dated reversals", "/backend/sales?view=collections");
+    metric("sales", "Net Invoiced Sales", result.sales, "money", "Selected period; invoices less dated cancellations and return credits", "/backend/sales?view=orders");
+    metric("collections", "Net Collections", result.collections, "money", "Selected period; allocated receipts less reversals and actual return refunds", "/backend/sales?view=collections");
     await queue("orders", "Orders to Fulfil", "/backend/sales?view=orders", [col("order_number", "Order"), col("customer", "Customer"), col("status", "Status")],
       sql`select o.id,o.order_number,c.name customer,o.status,o.date from erp_private.sales_orders o join erp_private.customers c on c.id=o.customer_id where o.status in ('Placed','Ready','Partially Delivered') and ${own(user, "o")}`, sql`date,id`);
   }

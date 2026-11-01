@@ -1,3 +1,4 @@
+import { openWorkspace, signOutWorkspace } from "./workspace-browser.js";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
@@ -33,7 +34,7 @@ export async function operationsBrowserSmoke(apiBase: string, email: string, pas
         await page.screenshot({ path: `artifacts/backend/operations-${label}-${name}.png`, fullPage: true });
       }
       await login(email);
-      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await openWorkspace(page, "Settings");
       await page.getByPlaceholder("Search name or reference").fill("DEV TEST");
       await page.getByRole("button", { name: /^Edit DEV TEST Dialyzer A/ }).last().waitFor();
       await capture("masters");
@@ -48,7 +49,7 @@ export async function operationsBrowserSmoke(apiBase: string, email: string, pas
       assert.equal(saved.status(), 200, "Product save should succeed");
       await page.getByRole("dialog").waitFor({ state: "hidden" });
       console.log(`Browser ${name}: product saved, opening imports`);
-      await page.getByRole("link", { name: "Imports", exact: true }).click();
+      await openWorkspace(page, "Imports");
       await page.getByRole("heading", { name: "Imports", exact: true }).waitFor();
       await capture("imports");
       console.log(`Browser ${name}: import register loaded`);
@@ -58,7 +59,7 @@ export async function operationsBrowserSmoke(apiBase: string, email: string, pas
       await capture("costing");
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.getByText("DEV TEST Supplier", { exact: false }).first().waitFor();
-      await page.getByRole("link", { name: "Inventory", exact: true }).click();
+      await openWorkspace(page, "Inventory");
       await page.getByRole("heading", { name: "Inventory", exact: true }).waitFor();
       await page.getByPlaceholder("Search inventory").fill("DEV TEST");
       await page.getByText("Available stock", { exact: true }).waitFor();
@@ -66,18 +67,18 @@ export async function operationsBrowserSmoke(apiBase: string, email: string, pas
       await page.getByRole("tab", { name: /^Batches/ }).click();
       await page.getByText("Batch register", { exact: true }).waitFor();
       await capture("batches");
-      await page.getByRole("button", { name: "Sign out", exact: true }).click();
+      await signOutWorkspace(page);
       await page.waitForURL("**/login");
       await login(warehouseEmail);
       assert.equal(await page.getByRole("link", { name: "Settings", exact: true }).count(), 0);
       // Use SPA navigation, not page.goto: a reload would conceal identity-cache leaks.
       const stockLoaded = page.waitForResponse((response) => response.url().includes("/api/inventory/stock") && response.status() === 200);
-      await page.getByRole("link", { name: "Inventory", exact: true }).click();
+      await openWorkspace(page, "Inventory");
       await stockLoaded;
       await page.getByText("Expiry attention", { exact: true }).waitFor();
       assert.equal(await page.getByText("Inventory valuation", { exact: true }).count(), 0);
       await capture("warehouse-stock");
-      await page.getByRole("link", { name: "Imports", exact: true }).click();
+      await openWorkspace(page, "Imports");
       await page.getByRole("heading", { name: "Imports", exact: true }).waitFor();
       await page.goto(`${origin}/backend/settings`);
       await page.getByRole("heading", { name: "Access denied", exact: true }).waitFor();

@@ -23,13 +23,13 @@ export async function activeSalesOwner(tx: Transaction, id: string) {
 export function customerSnapshot(row: typeof customers.$inferSelect) {
   return { customerName: row.name, customerAddressSnapshot: row.address, customerPhoneSnapshot: row.phone, customerContactSnapshot: row.contactPerson };
 }
-export async function readCustomers(tx: Transaction, user: User, id?: string): Promise<(Customer & { version: number })[]> {
-  const rows = await tx.select().from(customers).where(and(id ? eq(customers.id, id) : undefined, user.role === "Sales Executive" ? eq(customers.assignedSalesUserId, user.id) : undefined)).orderBy(asc(customers.name), asc(customers.id));
+export async function readCustomers(tx: Transaction, user: User, id?: string, ids?: string[]): Promise<(Customer & { version: number })[]> {
+  const rows = await tx.select().from(customers).where(and(ids ? inArray(customers.id, ids) : undefined, id ? eq(customers.id, id) : undefined, user.role === "Sales Executive" ? eq(customers.assignedSalesUserId, user.id) : undefined)).orderBy(asc(customers.name), asc(customers.id));
   if (!rows.length) return [];
   const balances = await tx.select({ id: customerEntries.customerId,
     due: sql<string>`coalesce(sum(${customerEntries.debit} - ${customerEntries.credit}), 0)::text`,
-    sales: sql<string>`coalesce(sum(case when ${customerEntries.type} = 'Invoice' then ${customerEntries.debit} when ${customerEntries.type} = 'Reversal' then -${customerEntries.credit} else 0 end), 0)::text`,
-    collected: sql<string>`coalesce(sum(case when ${customerEntries.type} = 'Collection' then ${customerEntries.credit} when ${customerEntries.type} = 'Reversal' then -${customerEntries.debit} else 0 end), 0)::text`
+    sales: sql<string>`coalesce(sum(case when ${customerEntries.type} = 'Invoice' then ${customerEntries.debit} when ${customerEntries.type} in ('Reversal','Return Credit') then -${customerEntries.credit} else 0 end), 0)::text`,
+    collected: sql<string>`coalesce(sum(case when ${customerEntries.type} = 'Collection' then ${customerEntries.credit} when ${customerEntries.type} in ('Reversal','Return Refund') then -${customerEntries.debit} else 0 end), 0)::text`
   }).from(customerEntries).where(inArray(customerEntries.customerId, rows.map((row) => row.id))).groupBy(customerEntries.customerId);
   return rows.map((row) => { const sums = balances.find((balance) => balance.id === row.id); return { id: row.id, name: row.name, type: row.type, contactPerson: row.contactPerson, phone: row.phone, email: row.email, address: row.address, territory: row.territory, assignedSalesUserId: row.assignedSalesUserId ?? undefined, paymentTerms: row.paymentTerms, creditLimit: user.role === "Warehouse Manager" ? "Restricted" : row.creditLimit, active: row.active, currentDue: user.role === "Warehouse Manager" ? "Restricted" : sums?.due ?? "0.00", totalSales: user.role === "Warehouse Manager" ? "Restricted" : sums?.sales ?? "0.00", totalCollected: user.role === "Warehouse Manager" ? "Restricted" : sums?.collected ?? "0.00", version: row.version }; });
 }
@@ -49,20 +49,20 @@ export async function canonicalSalesLines(tx: Transaction, inputs: z.infer<typeo
   }
   return inputs.map((input) => result.find((line) => line.productId === input.productId)!);
 }
-export async function readQuotations(tx: Transaction, user: User, id?: string): Promise<(Quotation & { version: number })[]> {
-  const rows = await tx.select().from(quotations).where(and(eq(quotations.archived, false), id ? eq(quotations.id, id) : undefined, user.role === "Sales Executive" ? eq(quotations.ownerId, user.id) : undefined)).orderBy(quotations.date, quotations.id);
+export async function readQuotations(tx: Transaction, user: User, id?: string, ids?: string[]): Promise<(Quotation & { version: number })[]> {
+  const rows = await tx.select().from(quotations).where(and(ids ? inArray(quotations.id, ids) : undefined, eq(quotations.archived, false), id ? eq(quotations.id, id) : undefined, user.role === "Sales Executive" ? eq(quotations.ownerId, user.id) : undefined)).orderBy(quotations.date, quotations.id);
   if (!rows.length) return [];
   const lines = await tx.select().from(quotationLines).where(inArray(quotationLines.quotationId, rows.map((row) => row.id))).orderBy(quotationLines.position);
   return rows.map((row) => ({ ...row.snapshot, id: row.id, quotationNumber: row.quotationNumber, date: row.date, customerId: row.customerId, ownerId: row.ownerId, createdByUserId: row.createdByUserId, createdAt: row.createdAt.toISOString(), submittedAt: row.submittedAt?.toISOString(), validityDays: row.validityDays, paymentTerms: row.paymentTerms, remarks: row.remarks, status: row.status, subtotal: row.subtotal, discountTotal: row.discountTotal, total: row.total, version: row.version,
     lines: lines.filter((line) => line.quotationId === row.id).map(({ quotationId: _parent, position: _position, ...line }) => { void _parent; void _position; return line; }) }));
 }
-export async function readOrders(tx: Transaction, user: User, id?: string): Promise<(SalesOrder & { version: number })[]> {
-  const rows = await tx.select().from(salesOrders).where(and(id ? eq(salesOrders.id, id) : undefined, user.role === "Sales Executive" ? eq(salesOrders.ownerId, user.id) : undefined)).orderBy(salesOrders.date, salesOrders.id);
+export async function readOrders(tx: Transaction, user: User, id?: string, ids?: string[]): Promise<(SalesOrder & { version: number })[]> {
+  const rows = await tx.select().from(salesOrders).where(and(ids ? inArray(salesOrders.id, ids) : undefined, id ? eq(salesOrders.id, id) : undefined, user.role === "Sales Executive" ? eq(salesOrders.ownerId, user.id) : undefined)).orderBy(salesOrders.date, salesOrders.id);
   if (!rows.length) return [];
   const lines = await tx.select().from(orderLines).where(inArray(orderLines.orderId, rows.map((row) => row.id))).orderBy(orderLines.position);
   const balances = await tx.select({ id: customerEntries.orderId,
     due: sql<string>`coalesce(sum(${customerEntries.debit} - ${customerEntries.credit}), 0)::text`,
-    collected: sql<string>`coalesce(sum(case when ${customerEntries.type} = 'Collection' then ${customerEntries.credit} when ${customerEntries.type} = 'Reversal' then -${customerEntries.debit} else 0 end), 0)::text`
+    collected: sql<string>`coalesce(sum(case when ${customerEntries.type} = 'Collection' then ${customerEntries.credit} when ${customerEntries.type} in ('Reversal','Return Refund') then -${customerEntries.debit} else 0 end), 0)::text`
   }).from(customerEntries).where(inArray(customerEntries.orderId, rows.map((row) => row.id))).groupBy(customerEntries.orderId);
   return rows.map((row) => { const balance = balances.find((balance) => balance.id === row.id); return { ...row.snapshot, ...row.instructions, id: row.id, orderNumber: row.orderNumber, quotationId: row.quotationId ?? undefined, date: row.date, customerId: row.customerId, ownerId: row.ownerId, createdByUserId: row.createdByUserId, createdAt: row.createdAt.toISOString(), amountReceived: balance?.collected ?? "0.00", due: balance?.due ?? "0.00", status: row.status, total: row.total, version: row.version,
     lines: lines.filter((line) => line.orderId === row.id).map(({ orderId: _parent, position: _position, ...line }) => { void _parent; void _position; return line; }) }; });

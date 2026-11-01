@@ -3,6 +3,10 @@ import type { ReportFilterKey } from "./reportCatalog";
 
 export const reportFilterLabels: Record<ReportFilterKey, string> = {
   order: "Sales Order",
+  stockControl: "Stock Control Document",
+  returnId: "Return / Credit Note",
+  payrollRun: "Payroll Run",
+  supplierClaim: "Supplier Claim",
   salesperson: "Salesperson",
   customer: "Customer / Buyer",
   product: "Product",
@@ -19,6 +23,10 @@ export const reportFilterLabels: Record<ReportFilterKey, string> = {
 
 const rowKeys: Record<ReportFilterKey, string[]> = {
   order: ["order"],
+  stockControl: ["stockControl"],
+  returnId: ["returnId"],
+  payrollRun: ["payrollRun"],
+  supplierClaim: ["supplierClaim"],
   salesperson: ["salesperson"],
   customer: ["customer"],
   product: ["product"],

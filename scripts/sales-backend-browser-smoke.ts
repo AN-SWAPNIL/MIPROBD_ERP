@@ -1,3 +1,4 @@
+import { openWorkspace, signOutWorkspace } from "./workspace-browser.js";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
@@ -17,8 +18,9 @@ export async function salesBackendBrowserSmoke(apiBase: string, email: string, p
   }
   try {
     await web.listen(); await mkdir("artifacts/backend", { recursive: true });
-    for (const [name, width] of [["desktop", 1440], ["mobile", 390]] as const) {
-      const page = await browser.newPage({ viewport: { width, height: 1000 } }); page.setDefaultTimeout(20000); page.setDefaultNavigationTimeout(45000);
+    const viewports = process.env.BACKEND_BROWSER_ONLY_MOBILE === "true" ? [["mobile", 390]] as const : [["desktop", 1440], ["mobile", 390]] as const;
+    for (const [name, width] of viewports) {
+      const page = await browser.newPage({ viewport: { width, height: 1000 } }); page.setDefaultTimeout(30000); page.setDefaultNavigationTimeout(45000);
       const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
       page.on("response", (response) => { if (response.url().includes("/api/") && response.status() >= 400) errors.push(`${response.status()} ${new URL(response.url()).pathname}`); });
       async function capture(label: string) {
@@ -29,7 +31,7 @@ export async function salesBackendBrowserSmoke(apiBase: string, email: string, p
       await page.goto(`${origin}/login`, { waitUntil: "domcontentloaded" });
       await page.getByLabel("Email", { exact: true }).fill(email); await page.getByLabel("Password", { exact: true }).fill(password);
       await page.getByRole("button", { name: "Sign In", exact: true }).click(); await page.waitForURL("**/backend", { timeout: 30000 });
-      await page.getByRole("link", { name: "Sales", exact: true }).click();
+      await openWorkspace(page, "Sales");
       await page.getByRole("button", { name: "New Customer", exact: true }).click();
       let dialog = page.getByRole("dialog");
       const customerName = `DEV TEST Browser ${name} ${suffix}`;
@@ -42,6 +44,8 @@ export async function salesBackendBrowserSmoke(apiBase: string, email: string, p
       await page.getByLabel("Search sales records", { exact: true }).fill(customerName);
       await page.getByRole("button", { name: `Create quotation for ${customerName}`, exact: true }).click();
       dialog = page.getByRole("dialog");
+      await dialog.getByLabel("Search Product variant", { exact: true }).fill(suffix);
+      await dialog.getByLabel("Product variant", { exact: true }).locator(`option[value="${productId}"]`).waitFor({ state: "attached" });
       await dialog.getByLabel("Product variant", { exact: true }).selectOption(productId);
       await dialog.getByLabel("Quantity", { exact: true }).fill("0.3");
       await dialog.getByLabel("Unit price", { exact: true }).fill("12.34");
@@ -71,8 +75,12 @@ export async function salesBackendBrowserSmoke(apiBase: string, email: string, p
       await dialog.waitFor({ state: "hidden" }); assert.equal(invoice.total, "3.69");
       await posted(page, `/invoices/${invoice.id}/approve`, () => page.getByRole("button", { name: "Approve", exact: true }).click());
       await page.getByRole("button", { name: "Record Collection", exact: true }).click();
-      dialog = page.getByRole("dialog"); await dialog.getByLabel("Deposit Account", { exact: true }).selectOption(accountId);
-      await dialog.getByLabel("Cheque / Transfer Ref", { exact: true }).fill("TEST BROWSER");
+      dialog = page.getByRole("dialog");
+      await dialog.getByLabel("Search Deposit Account", { exact: true }).fill(suffix);
+      await dialog.getByLabel("Deposit Account", { exact: true }).locator(`option[value="${accountId}"]`).waitFor({ state: "attached" });
+      await dialog.getByLabel("Deposit Account", { exact: true }).selectOption(accountId);
+      await dialog.getByLabel("Amount", { exact: true }).fill("3.69");
+      await dialog.getByLabel("Payment Reference", { exact: true }).fill("TEST BROWSER");
       const receipt = await posted(page, "/collections", () => dialog.getByRole("button", { name: "Post Collection", exact: true }).click());
       await dialog.waitFor({ state: "hidden" }); assert.equal(receipt.amount, "3.69");
       await page.getByRole("button", { name: "Record Collection", exact: true }).waitFor({ state: "hidden" });
@@ -80,13 +88,13 @@ export async function salesBackendBrowserSmoke(apiBase: string, email: string, p
       await page.getByRole("button", { name: "Back to Sales", exact: true }).click();
       await page.getByRole("tab", { name: /^Collections/ }).click();
       await page.getByLabel("Search sales records", { exact: true }).fill(receipt.receiptNumber);
-      await page.getByRole("button", { name: `Reverse ${receipt.receiptNumber}`, exact: true }).click();
+      await page.getByRole("row").filter({ hasText: receipt.receiptNumber }).getByRole("button", { name: "Reverse Receipt", exact: true }).click();
       dialog = page.getByRole("dialog"); await dialog.getByLabel("Cancellation Reason", { exact: true }).fill("Browser test receipt reversal");
       await posted(page, `/collections/${receipt.id}/reverse`, () => dialog.getByRole("button", { name: "Reverse Receipt", exact: true }).click());
       await dialog.waitFor({ state: "hidden" });
       await page.getByRole("row").filter({ hasText: receipt.receiptNumber }).getByText("Reversed", { exact: true }).waitFor();
       await capture("receipt-reversed");
-      await page.getByRole("button", { name: "Sign out", exact: true }).click(); await page.waitForURL("**/login");
+      await signOutWorkspace(page); await page.waitForURL("**/login");
       assert.deepEqual(errors, []); await page.close();
       console.log(`Persisted sales browser ${name}: quotation to collection and reversal passed.`);
     }

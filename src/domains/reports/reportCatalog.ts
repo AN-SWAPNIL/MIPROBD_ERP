@@ -1,10 +1,11 @@
 import type { Capability } from "../erp.types.js";
 import type { PermissionAction, PermissionKey, User } from "../../types/index.js";
 import { hasCapability, hasEffectivePermission } from "../../lib/permissions/effectiveAccess.js";
+import { canReadLedger,canReadPayroll } from "../ledger/access.js";
 
 export type ReportCategoryId = "sales" | "customers" | "suppliers" | "inventory" | "accounts" | "employees" | "controls";
 export type ReportSourceGroup = "sales" | "inventory" | "imports" | "expenses" | "employees" | "controls";
-export type ReportFilterKey = "salesperson" | "customer" | "product" | "family" | "supplier" | "employee" | "account" | "territory" | "status" | "order" | "lead" | "captureQuality" | "reviewStatus";
+export type ReportFilterKey = "salesperson" | "customer" | "product" | "family" | "supplier" | "employee" | "account" | "territory" | "status" | "order" | "lead" | "captureQuality" | "reviewStatus" | "stockControl" | "returnId" | "payrollRun" | "supplierClaim";
 
 export type ReportDefinition = {
   id: string;
@@ -35,13 +36,22 @@ export const reportCategories: Array<{ id: ReportCategoryId; title: string; desc
 ];
 
 const reports: ReportDefinition[] = [
+  table("supplier-replacement-receipts","Supplier Replacement Receipts","suppliers","Accepted/rejected inspection quantities, new LOTs, approval and receiving evidence.","import",["supplierClaim","supplier","product","status"],["replacement","receipt","inspection"]),
+  table("supplier-claims","Supplier Claim Register","suppliers","Original receipt rejections and held-stock claims, independent approval and agreed resolution.","import",["supplierClaim","supplier","product","status"],["rejection","supplier credit"]),
+  table("supplier-replacements","Outstanding Supplier Replacements","suppliers","Approved promises, actual accepted replacements and remaining claim value.","import",["supplierClaim","supplier","product"],["replacement","claim"]),
+  table("payroll-register","Payroll Accrual & Payment Register","accounts","Approved employee earnings, deductions, actual payments and unpaid liability.","accounts",["payrollRun","employee"],["salary","payroll"]),
+  table("payroll-commission","Commission Reconciliation","accounts","Saved cumulative commission entitlement, earlier accrual, current adjustment and carry.","accounts",["payrollRun","employee"],["commission","clawback"]),
+  table("payroll-loans","Employee Advances & Loans","accounts","Original employee financing, approved payroll recoveries and outstanding balance.","accounts",["employee","status"],["advance","loan","recovery"]),
+  table("stock-return-register", "Inspected Stock Returns", "inventory", "Original delivery, LOT, expiry, inspection and returned stock condition.", "inventory", ["returnId","order","customer","product","status"], ["refusal","return","inspection"]),
+  table("customer-return-credit", "Customer Return Credits", "customers", "Posted original-invoice credits, inspection and restored saved batch cost.", "sales", ["returnId","order","customer","product"], ["return","credit note"]),
+  table("return-settlements", "Return Credit Applications & Refunds", "customers", "Approved credit transfers and actual customer refund outflows.", "sales", ["returnId","customer","account","status"], ["refund","credit application"]),
   table("sales-summary", "Sales Summary", "sales", "Approved invoice sales and collections by day, week, month or year.", "sales", ["salesperson", "customer"], ["daily", "weekly", "monthly", "yearly"], undefined, true),
   table("invoice-register", "Sales Invoice Register", "sales", "Approved, draft and cancelled invoices by period.", "sales", ["order", "salesperson", "customer", "status"], ["invoice", "billing"]),
   table("sales-sheet", "Sales Sheet", "sales", "Invoice-level product quantity, rate and amount detail.", "sales", ["order", "salesperson", "customer", "product"], ["item"]),
   table("sales-order-register", "Sales Order Register", "sales", "Orders with delivery, invoice and due status.", "sales", ["order", "salesperson", "customer", "status"], ["order"]),
   table("order-fulfilment", "Order Fulfilment Difference", "sales", "Ordered, delivered, invoiced and remaining quantities.", "sales", ["order", "salesperson", "customer", "product", "status"], ["remaining"]),
   table("delivery-challan-register", "Delivery Challan Register", "sales", "Posted challans, quantities and invoice linkage.", "sales", ["order", "customer", "status"], ["delivery", "challan"]),
-  table("delivery-invoice-exceptions", "Delivery vs Invoice Exceptions", "sales", "Uninvoiced delivery and invoice control exceptions.", "sales", ["customer"], ["reconciliation"]),
+  table("delivery-invoice-exceptions", "Delivery vs Invoice Exceptions", "sales", "Accepted deliveries still requiring invoice approval.", "sales", ["order", "customer"], ["reconciliation"]),
   table("delivered-sales", "Delivered Sales by Product", "sales", "Operational product movement based on delivery challans.", "sales", ["customer", "product"], ["dispatch"]),
   table("sales-by-product", "Sales by Product / Item", "sales", "Approved invoice quantity and value by product.", "sales", ["product"], ["item-wise"]),
   table("sales-by-family", "Sales by Product Family", "sales", "Approved invoice quantity and value by canonical family.", "sales", ["family"], ["category"]),
@@ -73,6 +83,11 @@ const reports: ReportDefinition[] = [
   table("current-stock", "Current Batch Stock", "inventory", "Available quantity by product lot and batch.", "inventory", ["product", "status"], ["batch"]),
   table("item-details", "Product Details", "inventory", "Product master, batch count, stock and standard price.", "inventory", ["product", "family", "status"], ["detail"]),
   table("stock-movement", "Stock Movements", "inventory", "Receipt and dispatch movement history by product.", "inventory", ["product", "status"], ["receive", "dispatch"]),
+  table("stock-holds", "Stock Holds & Releases", "inventory", "Partial quarantine or damage holds, inspected releases and outstanding units.", "inventory", ["product", "status"], ["quarantine", "damage", "inspection"]),
+  table("stock-control-register", "Stock Control Register", "inventory", "Prepared counts, write-offs and condition releases with source/approval status.", "inventory", ["stockControl", "product", "status"], ["inspection", "correction"]),
+  table("stock-count-variance", "Stock Counts & Variance", "inventory", "Physical counts, book quantities, investigated variance and posted cost impact.", "inventory", ["stockControl", "product", "status"], ["surplus", "shortage"]),
+  table("stock-writeoffs", "Stock Write-offs", "inventory", "Approved physical write-offs and their saved inventory loss postings.", "inventory", ["stockControl", "product", "status"], ["damage", "loss"]),
+  table("stock-condition-history", "Stock Condition Releases", "inventory", "Inspected whole-batch condition releases without rewriting original sources.", "inventory", ["stockControl", "product", "status"], ["quarantine", "inspection"]),
   table("expiry-report", "Expiry Attention", "inventory", "Expired and near-expiry batches requiring action.", "inventory", ["product", "status"], ["warning"]),
 
   table("monthly-ac-summary", "Monthly A/C Summary", "accounts", "Operating and non-operating cash summary for any period.", "accounts", [], ["monthly"]),
@@ -89,6 +104,10 @@ const reports: ReportDefinition[] = [
   table("mobile-banking-transactions", "Mobile Banking Transactions", "accounts", "Transactions posted through mobile-banking accounts.", "accounts", ["account"], ["bkash"]),
   table("cash-movement-summary", "Cash & Bank Movement Summary", "accounts", "Inflow, outflow and net movement by account.", "accounts", ["account"], ["flow"]),
   table("balance-sheet", "Balance Sheet", "accounts", "As-of-date financial position with source and reconciliation status.", "accounts", [], ["assets", "liabilities", "equity"], "view_financial_position"),
+  table("ledger-trial-balance", "General Ledger Trial Balance", "accounts", "Posted debit, credit and net balance by chart account.", "accounts", ["account"], ["double-entry", "trial"], "view_sensitive_cost"),
+  table("ledger-income-statement", "General Ledger Income Statement", "accounts", "Posted income, cost, operating expense and payroll contribution to profit or loss.", "accounts", [], ["profit", "loss", "income", "payroll"], "view_sensitive_cost"),
+  table("ledger-account-statement", "General Ledger Account Statement", "accounts", "Posted journal lines and running chart-account balances.", "accounts", ["account"], ["journal", "statement"], "view_sensitive_cost"),
+  table("ledger-control-reconciliation", "General Ledger Control Reconciliation", "accounts", "Compare stock, receivables, payables and cash journals with approved ledger mappings.", "accounts", [], ["reconciliation", "control"], "view_sensitive_cost"),
 
   table("employee-list", "Employee List", "employees", "Printable employee roster with assignment and system role.", "marketing", ["employee", "territory", "status"], ["directory"]),
   performance("salesperson-performance", "Sales Team Comparison", "Comparison of sales, collections, customers and activity.", ["salesperson", "territory"]),
@@ -132,8 +151,9 @@ function marketing(id: string, title: string, description: string, marketingPres
 
 export const reportCatalog = reports;
 
-export function visibleReportCatalog(user: User | null | undefined) {
-  return reportCatalog.filter((report) => hasEffectivePermission(user, report.permission.key, report.permission.action) && (!report.capability || hasCapability(user, report.capability)));
+export function visibleReportCatalog(user: User | null | undefined, persistent = false) {
+  const persistentOnly = new Set(["stock-holds", "stock-control-register", "stock-count-variance", "stock-writeoffs", "stock-condition-history", "stock-return-register", "customer-return-credit", "return-settlements"]);
+  return reportCatalog.filter((report) => ["supplier-claims","supplier-replacements","supplier-replacement-receipts"].includes(report.id)?persistent&&hasEffectivePermission(user,"reports")&&(["import","inventory","accounts"] as const).some(k=>hasEffectivePermission(user,k)):report.id.startsWith("payroll-")?persistent&&canReadPayroll(user)&&hasEffectivePermission(user,"reports"):(!persistentOnly.has(report.id) || persistent) && (!report.id.startsWith("ledger-") || persistent && canReadLedger(user)) && hasEffectivePermission(user, report.permission.key, report.permission.action) && (!report.capability || hasCapability(user, report.capability)));
 }
 
 export function reportSearchText(report: ReportDefinition) {

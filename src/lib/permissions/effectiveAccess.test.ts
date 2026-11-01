@@ -12,8 +12,18 @@ import {
   canViewManagedEmployeeActivity,
   getMarketingEmployeeScope,
   hasEffectivePermission,
+  hasCapability,
+  isSuperAdmin,
   normalizePermissionOverrides
 } from "./effectiveAccess.js";
+
+test("active Super Admin owns all access; delegated denies, pending accounts and titles cannot impersonate owner authority", () => {
+  const owner = user({ role: "Super Admin", capabilities: [], permissionOverrides: [{ permission: "accounts", action: "post", effect: "DENY" }] });
+  assert.equal(isSuperAdmin(owner), true); assert.equal(hasEffectivePermission(owner, "accounts", "post"), true); assert.equal(hasCapability(owner, "approve_payroll"), true); assert.equal(canManageUserAccess(owner), true);
+  for (const status of ["Pending", "Inactive"] as const) { assert.equal(isSuperAdmin({ ...owner, status }), false); assert.equal(hasEffectivePermission({ ...owner, status }, "settings"), false); assert.equal(hasCapability({ ...owner, status }, "approve_ledger"), false); assert.equal(canManageUserAccess({ ...owner, status }), false); }
+  const staff = user({ role: "Sales Executive", title: "Super Admin", capabilities: [] });
+  assert.equal(isSuperAdmin(staff), false); assert.equal(hasCapability(staff, "approve_ledger"), false); assert.equal(hasEffectivePermission(staff, "settings"), false);
+});
 
 function user(overrides: Partial<User> = {}): User {
   return {
@@ -36,6 +46,15 @@ test("role defaults are used when no override exists", () => {
   const officer = user();
   assert.equal(hasEffectivePermission(officer, "import", "view"), true);
   assert.equal(hasEffectivePermission(officer, "reports", "view"), false);
+});
+
+test("delegated access managers cannot propagate accounting, payroll or stock-control authority", () => {
+  const sensitive = ["manage_ledger", "approve_ledger", "view_payroll", "manage_payroll", "approve_payroll", "approve_stock_control"] as const;
+  const manager = user({ role: "Managing Director", capabilities: ["manage_user_access", ...sensitive] });
+  for (const capability of sensitive) {
+    assert.equal(canGrantCapability(manager, capability), false);
+    assert.equal(canGrantCapability(user({ role: "Super Admin" }), capability), true);
+  }
 });
 
 test("Managing Director can open the connected Sales customer view", () => {
@@ -114,7 +133,7 @@ test("employee hub composes directory, access and team-management authority", ()
   assert.equal(canAccessSettings(lifecycleManager), false, "users:view alone must not expose generic Settings");
   assert.equal(canManageUserAccess(accessManager), true);
   assert.equal(canAccessEmployeeHub(accessManager), false, "A capability alone cannot grant module view access");
-  assert.equal(canAccessEmployeeHub(user({ role: "Super Admin", permissionOverrides: [{permission:"users",action:"view",effect:"DENY"},{permission:"marketing",action:"view",effect:"DENY"}] })), false);
+  assert.equal(canAccessEmployeeHub(user({ role: "Super Admin", permissionOverrides: [{permission:"users",action:"view",effect:"DENY"},{permission:"marketing",action:"view",effect:"DENY"}] })), true);
   assert.equal(canViewManagedEmployeeActivity(salesManager), true);
   assert.equal(canAccessEmployeeHub(salesManager), true);
   assert.equal(canViewManagedEmployeeActivity(salesExecutive), false);
