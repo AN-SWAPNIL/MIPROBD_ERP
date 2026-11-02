@@ -1,15 +1,16 @@
 import { Router } from "express";
-import { and, asc, eq, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { employees, invitationJobs } from "../../database/schema.js";
+import { employees, invitationJobs, sessions } from "../../database/schema.js";
 import type { Transaction } from "../../database/client.js";
 import { canAssignRole, canManageEmployees, hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
-import { invitationListInput } from "../../src/domains/employees/invitationContracts.js";
+import { invitationActionInput, invitationListInput } from "../../src/domains/employees/invitationContracts.js";
 import { audit, identity, rateLimit, toUser, type Context } from "./context.js";
 import { assertAllowed, HttpError } from "./errors.js";
 import { deliverInvitation } from "./invitations.js";
-import { invitationFailure, maximumInvitationAttempts } from "./invitation-policy.js";
+import { deletedInvitationCode, invitationActions, invitationFailure, maximumInvitationAttempts } from "./invitation-policy.js";
+import { lockSessionActor } from "../operations/common.js";
 
 export async function queueInvitation(tx: Transaction, employeeId: string, requestedBy: string) {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${employeeId},77612014))`);
@@ -64,6 +65,10 @@ export async function processInvitation(ctx: Context, id?: string) {
         claim.employee.authUserId = data.user.id;
       });
     }
+    // Cancellation can happen while provider identity preparation is in flight.
+    const current = await ctx.db.select({ state: invitationJobs.state, leaseToken: invitationJobs.leaseToken, status: employees.status })
+      .from(invitationJobs).innerJoin(employees, eq(employees.id, invitationJobs.employeeId)).where(eq(invitationJobs.id, claim.job.id));
+    if (!current[0] || current[0].state !== "Processing" || current[0].leaseToken !== claim.leaseToken || current[0].status !== "Pending") throw new HttpError(409, "Invitation no longer active.");
     const result = await deliverInvitation(ctx, claim.employee); sent = result.sent;
     retryable = result.retryable ?? true; code = sent ? "PROVIDER_ACCEPTED" : result.failureCode ?? "DELIVERY_FAILED";
   } catch (error) { if (error instanceof HttpError) { retryable = error.status === 429; code = error.status === 429 ? "PROVIDER_LIMIT" : "IDENTITY_REVIEW"; } }
@@ -81,13 +86,42 @@ export function createInvitationOutboxRouter(ctx: Context) {
   router.get("/settings/invitations", async (req, res) => {
     const actor = identity(res).user; assertAllowed(canManageEmployees(actor, "create")); const q = invitationListInput.parse(req.query);
     const data = await ctx.db.transaction(async (tx) => {
-      const filters = and(q.state ? eq(invitationJobs.state, q.state) : undefined, actor.role === "Super Admin" ? undefined : eq(invitationJobs.requestedBy, actor.id));
+      const filters = and(ne(invitationJobs.lastCode, deletedInvitationCode), q.state ? eq(invitationJobs.state, q.state) : undefined, actor.role === "Super Admin" ? undefined : eq(invitationJobs.requestedBy, actor.id));
       const [{ total }] = await tx.select({ total: sql<number>`count(*)::int` }).from(invitationJobs).where(filters);
-      const rows = await tx.select({ job: invitationJobs, employeeName: employees.name }).from(invitationJobs).innerJoin(employees, eq(employees.id, invitationJobs.employeeId)).where(filters).orderBy(sql`${invitationJobs.updatedAt} desc`, invitationJobs.id).limit(25).offset((q.page - 1) * 25);
-      return { rows: rows.map(({ job, employeeName }) => ({ id: job.id, employeeId: job.employeeId, employeeName, state: job.state, attempts: job.attempts, nextAttemptAt: job.nextAttemptAt.toISOString(), lastCode: job.lastCode, sentAt: job.sentAt?.toISOString() ?? null, updatedAt: job.updatedAt.toISOString() })), total, page: q.page, pageSize: 25 };
+      const rows = await tx.select({ job: invitationJobs, employeeName: employees.name, employeeStatus: employees.status, role: employees.role }).from(invitationJobs).innerJoin(employees, eq(employees.id, invitationJobs.employeeId)).where(filters).orderBy(sql`${invitationJobs.updatedAt} desc`, invitationJobs.id).limit(25).offset((q.page - 1) * 25);
+      return { rows: rows.map(({ job, employeeName, employeeStatus, role }) => ({ id: job.id, employeeId: job.employeeId, employeeName, employeeStatus, ...invitationActions(actor, { ...job, employeeStatus, role }), state: job.state, attempts: job.attempts, nextAttemptAt: job.nextAttemptAt.toISOString(), lastCode: job.lastCode, sentAt: job.sentAt?.toISOString() ?? null, updatedAt: job.updatedAt.toISOString() })), total, page: q.page, pageSize: 25 };
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
     res.json({ success: true, data, message: "Invitation delivery queue loaded without tokens" });
   });
+  for (const action of ["cancel", "delete"] as const) {
+    const path = `/settings/invitations/:id${action === "cancel" ? "/cancel" : ""}`;
+    router[action === "cancel" ? "post" : "delete"](path, async (req, res) => {
+      const id = z.uuid().parse(req.params.id); const input = invitationActionInput.parse(req.body); const actor = identity(res);
+      await ctx.db.transaction(async (tx) => {
+        const user = await lockSessionActor(tx, actor);
+        assertAllowed(canManageEmployees(user, "create"));
+        const [candidate] = await tx.select({ employeeId: invitationJobs.employeeId }).from(invitationJobs).where(eq(invitationJobs.id, id));
+        if (!candidate) throw new HttpError(404, "Invitation not found.");
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${candidate.employeeId},77612014))`);
+        const [job] = await tx.select().from(invitationJobs).where(eq(invitationJobs.id, id)).for("update");
+        const [employee] = await tx.select().from(employees).where(eq(employees.id, candidate.employeeId)).for("update");
+        if (!job || !employee || job.lastCode === deletedInvitationCode) throw new HttpError(404, "Invitation not found.");
+        assertAllowed(user.id !== employee.id && canAssignRole(user, employee.role) && (user.role === "Super Admin" || job.requestedBy === user.id));
+        if (action === "delete") assertAllowed(hasEffectivePermission(user, "users", "delete"));
+        if (job.updatedAt.toISOString() !== input.updatedAt) throw new HttpError(409, "Invitation changed. Refresh the list before continuing.");
+        const allowed = invitationActions(user, { ...job, role: employee.role, employeeStatus: employee.status });
+        if (!(action === "cancel" ? allowed.canCancel : allowed.canDelete)) throw new HttpError(409, action === "cancel" ? "Only pending onboarding can be cancelled. Accepted employees must be managed through Access." : "Cancel the invitation and block its pending account before deleting it.");
+        const now = new Date(Math.max(Date.now(), job.updatedAt.getTime() + 1));
+        await tx.update(invitationJobs).set({ state: "Cancelled", lastCode: action === "delete" ? deletedInvitationCode : "CANCELLED_BY_ADMIN", leaseToken: null, leaseUntil: null, updatedAt: now }).where(eq(invitationJobs.id, id));
+        if (action === "cancel") {
+          await tx.update(employees).set({ status: "Inactive", version: sql`${employees.version} + 1`, updatedAt: now }).where(eq(employees.id, employee.id));
+          await tx.update(sessions).set({ revokedAt: now }).where(eq(sessions.employeeId, employee.id));
+        }
+        await audit(tx, user.id, action === "delete" ? "Invitation removed" : "Invitation cancelled", "Employee", employee.id, { jobId: id, previousState: job.state, previousCode: job.lastCode, attempts: job.attempts, sentAt: job.sentAt?.toISOString() ?? null, employeeStatus: employee.status });
+      });
+      res.json({ success: true, data: { id }, message: action === "cancel" ? "Invitation cancelled; the pending employee is inactive and cannot enter the ERP. An email already in flight cannot be recalled." : "Invitation removed from the delivery list; employee and audit history retained." });
+    });
+  }
   router.post("/settings/invitations/process", async (req, res) => {
     const actor = identity(res).user; assertAllowed(actor.role === "Super Admin" && hasEffectivePermission(actor, "users", "create"));
     // One email job per HTTP request; the CLI worker can process a larger bounded batch.
