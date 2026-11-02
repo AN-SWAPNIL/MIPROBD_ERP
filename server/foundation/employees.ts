@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { auditEvents, employees, sessions } from "../../database/schema.js";
+import { auditEvents, employees, invitationJobs, sessions } from "../../database/schema.js";
 import { canAssignRole, canGrantCapability, canGrantPermission, canManageEmployees, canManageTargetUser, canManageUserAccess, hasEffectivePermission, normalizePermissionOverrides } from "../../src/lib/permissions/effectiveAccess.js";
 import { accessSchema, inviteSchema, profileSchema } from "./contracts.js";
 import { audit, identity, rateLimit, toUser, type Context } from "./context.js";
@@ -9,6 +9,8 @@ import { assertAllowed, HttpError } from "./errors.js";
 import { lockActor } from "../operations/common.js";
 import { processInvitation, queueInvitation } from "./invitation-outbox.js";
 import { visibleEmployee } from "./employee-visibility.js";
+import { deletedInvitationCode } from "./invitation-policy.js";
+import { retireCancelledIdentity } from "./invitations.js";
 
 export function createEmployeeRouter(ctx: Context) {
   const router = Router();
@@ -53,8 +55,26 @@ export function createEmployeeRouter(ctx: Context) {
     const reserved = await ctx.db.transaction(async (tx) => {
       const [current] = await tx.select().from(employees).where(eq(employees.id, actor.user.id)).for("update");
       assertAllowed(current && canManageEmployees(toUser(current), "create") && canAssignRole(toUser(current), input.role));
-      const [existing] = await tx.select().from(employees).where(eq(employees.email, input.email)).for("update");
-      if (existing) throw new HttpError(409, existing.status === "Pending" ? "This employee already exists. Use its invitation retry action." : "This email already belongs to an employee. Review the existing employee account instead of creating a duplicate.");
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.email},77612015))`);
+      const [candidate] = await tx.select({ id: employees.id }).from(employees).where(eq(employees.email, input.email));
+      if (candidate) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${candidate.id},77612014))`);
+        const [existing] = await tx.select().from(employees).where(eq(employees.id, candidate.id)).for("update");
+        const [job] = await tx.select().from(invitationJobs).where(eq(invitationJobs.employeeId, candidate.id)).for("update");
+        if (existing.status !== "Inactive" || job?.state !== "Cancelled" || job.lastCode !== deletedInvitationCode) throw new HttpError(409, existing.status === "Pending" ? "This employee already exists. Use its invitation retry action." : "This email already belongs to an employee. Review the existing employee account instead of creating a duplicate.");
+        assertAllowed(existing.id !== current.id && canAssignRole(toUser(current), existing.role) && (current.role === "Super Admin" || job.requestedBy === current.id));
+        const [accepted] = await tx.select({ id: auditEvents.id }).from(auditEvents).where(and(eq(auditEvents.entityType, "Employee"), eq(auditEvents.entityId, existing.id), sql`${auditEvents.action} in ('Signed in','Invitation accepted')`)).limit(1);
+        const [previousSession] = await tx.select({ id: sessions.id }).from(sessions).where(eq(sessions.employeeId, existing.id)).limit(1);
+        if (accepted || previousSession) throw new HttpError(409, "This account has verified employee history. Its identity requires administrator review rather than a fresh invitation.");
+        const [codeOwner] = await tx.select({ id: employees.id }).from(employees).where(eq(employees.employeeCode, input.employeeCode));
+        if (codeOwner && codeOwner.id !== existing.id) throw new HttpError(409, "This Employee ID belongs to another employee. Choose a different Employee ID.");
+        // Retire only never-accepted, deleted onboarding. If the provider fails, keep it closed.
+        await retireCancelledIdentity(ctx, existing);
+        const [row] = await tx.update(employees).set({ ...input, status: "Pending", authUserId: null, capabilities: [], permissionOverrides: [], managerId: null, version: existing.version + 1, updatedAt: new Date() }).where(eq(employees.id, existing.id)).returning();
+        await audit(tx, current.id, "Employee reinvitation reserved", "Employee", row.id, { role: row.role, previousRole: existing.role, freshSetupIdentity: true });
+        const jobId = await queueInvitation(tx, row.id, current.id);
+        return { row, jobId };
+      }
       const [row] = await tx.insert(employees).values({ ...input, id: `emp-${randomUUID()}`, status: "Pending" }).returning();
       await audit(tx, current.id, "Employee invitation reserved", "Employee", row.id, { role: row.role });
       const jobId = await queueInvitation(tx, row.id, current.id);

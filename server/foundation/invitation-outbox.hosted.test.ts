@@ -51,6 +51,76 @@ test("hosted outbox: durable retries, worker leases, cooldown, authorization and
   } finally { await h.close(); }
 });
 
+test("hosted reinvitation: removed email/employee ID can be reused with a fresh identity, durable audit and no real mail", { skip: process.env.RUN_HOSTED_UPDATE13_TESTS !== "true", timeout: 240000 }, async () => {
+  const h = await hostedHarness("reinvite");
+  let fixture: (typeof h.identities)[number] | undefined;
+  try {
+    const admin = await h.employee("Super Admin"); const denied = await h.employee("Accounts");
+    const email = `backend-reinvite-target-${h.suffix}@example.invalid`;
+    const created = await h.ctx.admin.auth.admin.createUser({ email, password: h.password, email_confirm: true });
+    assert.equal(created.error, null); assert.ok(created.data.user);
+    fixture = { id: `test-reinvite-target-${h.suffix}`, authId: created.data.user.id, email, token: "", role: "Sales Executive" };
+    h.identities.push(fixture);
+    const oldId = fixture.authId;
+    const employeeCode = `REINV-${h.suffix.slice(0, 8)}`;
+    await h.ctx.db.insert(employees).values({ id: fixture.id, authUserId: oldId, email, name: "DEV TEST Old Onboarding", role: "Sales Executive", status: "Pending", employeeCode, capabilities: ["view_sensitive_cost"] });
+    const oldSession = await h.ctx.publicClient().auth.signInWithPassword({ email, password: h.password });
+    assert.ok(oldSession.data.session);
+    const id = await h.ctx.db.transaction((tx) => queueInvitation(tx, fixture!.id, admin.id));
+    let [job] = await h.ctx.db.select().from(invitationJobs).where(eq(invitationJobs.id, id));
+    await h.expect(`/settings/invitations/${id}/cancel`, admin.token, { updatedAt: job.updatedAt.toISOString() });
+    [job] = await h.ctx.db.select().from(invitationJobs).where(eq(invitationJobs.id, id));
+    await h.expect(`/settings/invitations/${id}`, admin.token, { updatedAt: job.updatedAt.toISOString() }, 200, { method: "DELETE" });
+    const input = { email, name: "DEV TEST Fresh Onboarding", employeeCode, role: "Sales Executive" };
+    await h.expect("/employees/invite", denied.token, input, 403);
+    const originalDelete = h.ctx.admin.auth.admin.deleteUser;
+    h.ctx.admin.auth.admin.deleteUser = async () => ({ data: { user: null }, error: new AuthApiError("Synthetic provider outage", 503, "unexpected_failure") });
+    try { await h.expect("/employees/invite", admin.token, input, 502); } finally { h.ctx.admin.auth.admin.deleteUser = originalDelete; }
+    const [stillClosed] = await h.ctx.db.select().from(employees).where(eq(employees.id, fixture.id));
+    assert.equal(stillClosed.status, "Inactive"); assert.equal(stillClosed.authUserId, oldId);
+    assert.equal((await h.expect(`/workforce/employees?employee=${fixture.id}`, admin.token)).total, 0);
+    const adminCode = `OWNER-${h.suffix.slice(0, 8)}`;
+    await h.ctx.db.update(employees).set({ employeeCode: adminCode }).where(eq(employees.id, admin.id));
+    await h.expect("/employees/invite", admin.token, { ...input, employeeCode: adminCode }, 409);
+    assert.equal((await h.ctx.admin.auth.admin.getUserById(oldId)).error, null);
+    let deliveries = 0;
+    for (const ctx of [h.ctx, h.other]) ctx.admin.auth.admin.inviteUserByEmail = async (recipient) => {
+      assert.equal(recipient, email); deliveries++;
+      const users = await ctx.admin.auth.admin.listUsers({ perPage: 1000 });
+      assert.equal(users.error, null);
+      return { data: { user: users.data.users.find((user) => user.email === email)! }, error: null };
+    };
+    const responses = await Promise.all([h.call("/employees/invite", admin.token, input), h.call("/employees/invite", admin.token, input, { instance: 1 })]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [201, 409]); assert.equal(deliveries, 1);
+    const [restored] = await h.ctx.db.select().from(employees).where(eq(employees.id, fixture.id));
+    assert.equal(restored.status, "Pending"); assert.notEqual(restored.authUserId, oldId); assert.ok(restored.authUserId);
+    fixture.authId = restored.authUserId;
+    assert.equal(restored.employeeCode, employeeCode); assert.equal(restored.name, input.name);
+    assert.deepEqual(restored.capabilities, []); assert.deepEqual(restored.permissionOverrides, []);
+    assert.equal((await h.expect(`/workforce/employees?employee=${fixture.id}`, admin.token)).total, 1);
+    assert.equal((await h.ctx.admin.auth.admin.getUserById(oldId)).error?.status, 404);
+    await h.expect("/auth/exchange", "", { accessToken: oldSession.data.session.access_token, refreshToken: oldSession.data.session.refresh_token }, 401);
+    [job] = await h.ctx.db.select().from(invitationJobs).where(eq(invitationJobs.id, id));
+    assert.equal(job.state, "Sent"); assert.equal(job.attempts, 1);
+    const audits = await h.ctx.db.select().from(auditEvents).where(eq(auditEvents.entityId, fixture.id));
+    for (const action of ["Invitation cancelled", "Invitation removed", "Employee reinvitation reserved"]) assert.ok(audits.some((event) => event.action === action));
+    assert.equal((await h.ctx.admin.auth.admin.updateUserById(restored.authUserId, { password: h.password, email_confirm: true })).error, null);
+    const fresh = await h.ctx.publicClient().auth.signInWithPassword({ email, password: h.password }); assert.ok(fresh.data.session);
+    const accepted = await h.expect("/auth/exchange", "", { accessToken: fresh.data.session.access_token, refreshToken: fresh.data.session.refresh_token });
+    assert.equal(accepted.user.id, fixture.id); assert.equal(accepted.user.status, "Active");
+    await h.expect("/employees/invite", admin.token, input, 409);
+    assert.equal(deliveries, 1);
+  } finally {
+    if (fixture) {
+      const users = await h.ctx.admin.auth.admin.listUsers({ perPage: 1000 });
+      const current = users.data.users.find((user) => user.email === fixture!.email);
+      if (current) fixture.authId = current.id;
+      else { await h.ctx.db.update(employees).set({ status: "Inactive", authUserId: null }).where(eq(employees.id, fixture.id)); h.identities.splice(h.identities.indexOf(fixture), 1); }
+    }
+    await h.close();
+  }
+});
+
 test("hosted invitations: cancellation blocks sessions/old links, logical deletion retains audit, and in-flight sends cannot restore onboarding", { skip: process.env.RUN_HOSTED_UPDATE13_TESTS !== "true", timeout: 240000 }, async () => {
   const h = await hostedHarness("invitation-cancel");
   try {
@@ -117,6 +187,8 @@ test("hosted invitations: cancellation blocks sessions/old links, logical deleti
     await h.expect("/auth/login", "", { email: target.email, password: h.password }, 403);
     assert.equal((await h.expect(rosterPath, admin.token)).total, 0, "Removal is distinct from the inactive status");
     await h.ctx.db.update(employees).set({ status: "Inactive" }).where(eq(employees.id, target.id));
+    await h.expect("/employees/invite", admin.token, { email: target.email, name: "Do not reset accepted history", employeeCode: "NO-RESET-TEST", role: "Sales Executive" }, 409);
+    assert.equal((await h.ctx.admin.auth.admin.getUserById(target.authId)).error, null);
 
     const inFlight = await h.employee("Sales Executive");
     await h.ctx.db.update(employees).set({ status: "Pending" }).where(eq(employees.id, inFlight.id));
