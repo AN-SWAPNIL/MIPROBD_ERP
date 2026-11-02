@@ -2,7 +2,9 @@
 
 This branch preserves the last mock-only sales-lifecycle release (`43fb218`) for demonstrations. It contains the public website, demo login, import costing, inventory, sales, employee activity and reports. Later production backend features are intentionally absent.
 
-**Website:** https://medical-supplier-erp.vercel.app
+**Website:** https://mipro-erp-prototype.vercel.app
+
+**Repository:** https://github.com/AN-SWAPNIL/MIPROBD_ERP
 
 ## Run
 
@@ -31,6 +33,6 @@ All transactions, edits and uploaded metadata are temporary. Restarts reset them
 | `dev` | Real-backend staging |
 | `main` | Isolated client UAT |
 
-This source deploys only to `medical-supplier-erp`, from `prototype`. Real backend credentials cause its build to fail. Raw client workbooks/requirements and production database tooling are not in this branch's current tree. Approved public images/documents remain; older Git history is retained.
+This source deploys only to `mipro-erp-prototype`, from `prototype`. Real backend credentials cause its build to fail. Raw client workbooks/requirements and production database tooling are not in this branch's current tree. Approved public images/documents remain; older Git history is retained.
 
 Never merge prototype into `dev` or `main`. Develop real backend changes on `dev`, then promote to `main` after backups and explicit migration checks.
