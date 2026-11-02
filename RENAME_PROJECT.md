@@ -1,6 +1,6 @@
 # Rename The Repository And Local Folder
 
-The GitHub repository is now **AN-SWAPNIL/MIPROBD_ERP** (verified by repository ID `1277933275`). The local folder can independently be named **MIPRO_ERP**. Do local moves when servers and editors are closed; the workspace contains a linked prototype checkout.
+The GitHub repository is now **AN-SWAPNIL/MIPROBD_ERP** (verified by repository ID `1277933275`). The requested local folder name is also **MIPROBD_ERP**. Do local moves when servers and editors are closed; the workspace contains a linked prototype checkout.
 
 Renaming does not require a new database, a data migration or different login accounts. Staging and UAT keep their existing Supabase references, Vercel project IDs, domains and private environment filenames. The deleted demo Vercel project has been replaced by `mipro-erp-prototype` (`prototype` branch).
 
@@ -36,14 +36,14 @@ Stop local servers, close editors/terminals rooted in the project, then run from
 
 ```powershell
 Set-Location -LiteralPath 'D:\Codes\Projects'
-Rename-Item -LiteralPath 'D:\Codes\Projects\Medical_Supplier' -NewName 'MIPRO_ERP'
-Set-Location -LiteralPath 'D:\Codes\Projects\MIPRO_ERP'
-git worktree repair 'D:/Codes/Projects/MIPRO_ERP/artifacts/worktrees/prototype'
+Rename-Item -LiteralPath 'D:\Codes\Projects\Medical_Supplier' -NewName 'MIPROBD_ERP'
+Set-Location -LiteralPath 'D:\Codes\Projects\MIPROBD_ERP'
+git worktree repair 'D:/Codes/Projects/MIPROBD_ERP/artifacts/worktrees/prototype'
 git worktree list
 git status
 npm run check:environment
 ```
 
-Do not overwrite an existing `MIPRO_ERP` directory. `git worktree repair` repairs the moved main/prototype checkout links; never edit or replace `.git` files manually. [Git worktree documentation](https://git-scm.com/docs/git-worktree).
+Do not overwrite an existing `MIPROBD_ERP` directory. `git worktree repair` repairs the moved main/prototype checkout links; never edit or replace `.git` files manually. [Git worktree documentation](https://git-scm.com/docs/git-worktree).
 
 Reopen the renamed directory in your editor and restart using `npm run dev`. Source paths and private environment paths are repository-relative. Generated build caches can be rebuilt if needed; keep credentials, backups and release/recovery evidence. Internal npm package names do not need to change for this rename.
