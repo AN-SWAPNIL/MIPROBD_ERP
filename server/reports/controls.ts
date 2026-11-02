@@ -5,7 +5,7 @@ import { directoryScope } from "../workforce/scope.js";
 
 export function controlSpec(id: string, q: Query, user: User): Spec | undefined {
   if (id === "employee-list") return {
-    base: sql`select id employee_id,employee_code code,name employee,title,department,territory,phone,role,status from erp_private.employees where ${directoryScope(user,sql`id`)}`, dimensions: { employee: dim("employee_id", "employee"), territory: dim("territory"), status: dim("status") },
+    base: sql`select id employee_id,employee_code code,name employee,title,department,territory,phone,role,status from erp_private.employees e where ${directoryScope(user,sql`e.id`)}`, dimensions: { employee: dim("employee_id", "employee"), territory: dim("territory"), status: dim("status") },
     result: raw("select * from scoped order by employee,code,employee_id"), basis: "Current employee directory only. No Auth identifiers, email setup links, session data, access overrides, evidence or performance scores are included.", columns: [text("code", "Employee Code"), text("employee", "Employee"), text("title", "Designation"), text("department", "Department"), text("territory", "Territory"), text("phone", "Phone"), text("role", "Current Role"), text("status", "Status")]
   };
   if (["audit-trail", "access-change-audit", "fifo-override-audit"].includes(id)) {

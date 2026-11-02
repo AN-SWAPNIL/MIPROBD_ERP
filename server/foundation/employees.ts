@@ -8,6 +8,7 @@ import { audit, identity, rateLimit, toUser, type Context } from "./context.js";
 import { assertAllowed, HttpError } from "./errors.js";
 import { lockActor } from "../operations/common.js";
 import { processInvitation, queueInvitation } from "./invitation-outbox.js";
+import { visibleEmployee } from "./employee-visibility.js";
 
 export function createEmployeeRouter(ctx: Context) {
   const router = Router();
@@ -30,7 +31,7 @@ export function createEmployeeRouter(ctx: Context) {
   router.get("/employees", async (req, res) => {
     assertAllowed(hasEffectivePermission(identity(res).user, "users", "view"));
     const page = Math.max(1, Math.min(10000, Number(req.query.page) || 1));
-    const rows = await ctx.db.select().from(employees).orderBy(asc(employees.name), asc(employees.id)).limit(100).offset((page - 1) * 100);
+    const rows = await ctx.db.select().from(employees).where(visibleEmployee()).orderBy(asc(employees.name), asc(employees.id)).limit(100).offset((page - 1) * 100);
     res.json({ success: true, data: rows.map((row) => ({ ...toUser(row), version: row.version })), message: "Employees loaded", meta: { page, pageSize: 100 } });
   });
 
@@ -38,7 +39,7 @@ export function createEmployeeRouter(ctx: Context) {
     const user = identity(res).user;
     const companyScope = hasEffectivePermission(user, "users") || hasEffectivePermission(user, "accounts");
     assertAllowed(companyScope || hasEffectivePermission(user, "marketing"));
-    const rows = await ctx.db.select().from(employees).where(companyScope ? undefined : eq(employees.id, user.id)).orderBy(asc(employees.name), asc(employees.id));
+    const rows = await ctx.db.select().from(employees).where(and(visibleEmployee(), companyScope ? undefined : eq(employees.id, user.id))).orderBy(asc(employees.name), asc(employees.id));
     const activeOnly = req.query.status === "Active";
     const search = String(req.query.search ?? "").slice(0, 200).toLowerCase();
     const data = rows.filter((row) => (!activeOnly || row.status === "Active") && `${row.name} ${row.employeeCode} ${row.title}`.toLowerCase().includes(search)).map((row) => ({ id: row.id, name: row.name, title: row.title, employeeCode: row.employeeCode, department: row.department, territory: row.territory, phone: row.phone, status: row.status }));
@@ -91,7 +92,9 @@ export function createEmployeeRouter(ctx: Context) {
       if (!actorRow) throw new HttpError(401, "Employee not found.");
       const current = toUser(actorRow);
       assertAllowed(current.status === "Active" && canManageUserAccess(current));
-      const [target] = await tx.select().from(employees).where(eq(employees.id, String(req.params.id))).for("update");
+      const targetId = String(req.params.id);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${targetId},77612014))`);
+      const [target] = await tx.select().from(employees).where(and(eq(employees.id, targetId), visibleEmployee())).for("update");
       if (!target) throw new HttpError(404, "Employee not found.");
       assertAllowed(canManageTargetUser(current, toUser(target)) && canAssignRole(current, input.role));
       assertAllowed(input.capabilities.every((capability) => canGrantCapability(current, capability)) && input.permissionOverrides.every((override) => canGrantPermission(current, override.permission, override.action, override.effect)));

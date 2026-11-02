@@ -5,6 +5,7 @@ import type { User } from "../../src/types/index.js";
 import { getMarketingEmployeeScope, hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
 import { toUser } from "../foundation/context.js";
 import { assertAllowed, HttpError } from "../foundation/errors.js";
+import { visibleEmployee } from "../foundation/employee-visibility.js";
 
 export function marketingScope(user: User, column: SQL): SQL {
   const scope = getMarketingEmployeeScope(user);
@@ -12,9 +13,9 @@ export function marketingScope(user: User, column: SQL): SQL {
   if (scope === "TEAM") return sql`${column} in (with recursive team as (select id from erp_private.employees where id=${user.id} union all select e.id from erp_private.employees e join team t on e.manager_id=t.id) select id from team)`;
   return scope === "SELF" ? sql`${column}=${user.id}` : sql`false`;
 }
-export const directoryScope = (user: User,column: SQL) => hasEffectivePermission(user,"users") ? sql`true` : marketingScope(user,column);
+export const directoryScope = (user: User,column: SQL) => sql`${visibleEmployee(column)} and (${hasEffectivePermission(user,"users") ? sql`true` : marketingScope(user,column)})`;
 export async function assertEmployeeScope(db: Transaction|Database,user: User,id: string,directory=false) {
-  const [row] = (await db.execute<{id:string}>(sql`select id from erp_private.employees where id=${id} and ${directory?directoryScope(user,sql`id`):marketingScope(user,sql`id`)}`)).rows;
+  const [row] = (await db.execute<{id:string}>(sql`select e.id from erp_private.employees e where e.id=${id} and ${directory?directoryScope(user,sql`e.id`):marketingScope(user,sql`e.id`)}`)).rows;
   if (!row) throw new HttpError(404,"Employee not found in your permitted scope.");
 }
 export async function activeOwner(tx: Transaction,user: User,id: string) {
