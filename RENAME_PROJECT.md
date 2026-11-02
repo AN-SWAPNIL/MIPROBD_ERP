@@ -1,6 +1,6 @@
 # Rename The Repository And Local Folder
 
-The GitHub repository is now **AN-SWAPNIL/MIPROBD_ERP** (verified by repository ID `1277933275`). The requested local folder name is also **MIPROBD_ERP**. Do local moves when servers and editors are closed; the workspace contains a linked prototype checkout.
+The rename is complete: GitHub is **AN-SWAPNIL/MIPROBD_ERP** (repository ID `1277933275`) and the local workspace is **D:\Codes\Projects\MIPROBD_ERP**. The remote, linked prototype worktree and environment selection were verified after the move. The commands below remain as a maintenance reference; do not repeat the old-folder rename.
 
 Renaming does not require a new database, a data migration or different login accounts. Staging and UAT keep their existing Supabase references, Vercel project IDs, domains and private environment filenames. The deleted demo Vercel project has been replaced by `mipro-erp-prototype` (`prototype` branch).
 

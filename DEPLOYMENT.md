@@ -2,7 +2,7 @@
 
 ## Current Branch Mapping
 
-The Git-linked targets are `prototype` -> `medical-supplier-erp`, `dev` -> `mipro-erp-staging`, and `main` -> `mipro-erp`. Each has independent Vercel runtime variables. Real credentials remain ignored locally; they are not tracked per branch. Preview builds are disabled and project-specific branch gates reject cross-deployments. See [BRANCHES_AND_ENVIRONMENTS.md](BRANCHES_AND_ENVIRONMENTS.md) for commands, database checks and explicit migration promotion. Older deployment IDs and non-Git-linked descriptions below are historical, not the current release process.
+The Git-linked targets are `prototype` -> `mipro-erp-prototype`, `dev` -> `mipro-erp-staging`, and `main` -> `mipro-erp`, using repository `AN-SWAPNIL/MIPROBD_ERP`. Each has independent Vercel runtime variables. Real credentials remain ignored locally; they are not tracked per branch. Preview builds are disabled and project-specific branch gates reject cross-deployments. See [BRANCHES_AND_ENVIRONMENTS.md](BRANCHES_AND_ENVIRONMENTS.md) for commands, database checks and explicit migration promotion. Older deployment IDs and non-Git-linked descriptions below are historical, not the current release process.
 
 ## Current Client UAT
 
