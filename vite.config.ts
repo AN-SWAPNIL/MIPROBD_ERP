@@ -6,6 +6,7 @@ import { loadEnvFile } from "node:process";
 loadEnvFile(new URL("./config/prototype.env", import.meta.url));
 
 export default defineConfig({
+  envDir: false,
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,

@@ -13,6 +13,8 @@ npm run dev
 
 Frontend: localhost:5173. Mock API: localhost:4174. Non-secret defaults are in `config/prototype.env`; no Supabase connection is needed. Demo accounts appear on login. Demo password: `password123`.
 
+Vite does not automatically read root `.env` or `.env.local`. Only the explicit non-secret `config/prototype.env` defaults and hosting variables are used. Generated testing screenshots are disposable; preserve `public/` images, certificates and letterheads. The mock demonstration does not require private credentials.
+
 ```powershell
 npm run lint
 npm test
