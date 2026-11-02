@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { environments, profileForBranch, validateProfile } from "./environment-profile.mjs";
+import { environments, matchesLinkedRepository, profileForBranch, validateProfile } from "./environment-profile.mjs";
 
 const profile = environments.profiles.uat;
+test("repository identity survives renaming but never accepts a same-name different repository", () => {
+  assert.equal(matchesLinkedRepository({ type: "github", repoId: environments.repositoryId, repo: "MIPRO_ERP", org: "AN-SWAPNIL" }), true);
+  assert.equal(matchesLinkedRepository({ type: "github", repoId: 1, repo: "Medical_Supplier_ERP", org: "AN-SWAPNIL" }), false);
+  assert.equal(matchesLinkedRepository(undefined), false);
+});
 const valid = {
   ERP_BACKEND_MODE: "foundation", VITE_BACKEND_MODE: "foundation", DEMO_MODE: "false", VITE_DEMO_MODE: "false",
   SUPABASE_URL: `https://${profile.supabaseRef}.supabase.co`, VITE_SUPABASE_URL: `https://${profile.supabaseRef}.supabase.co`,

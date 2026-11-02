@@ -8,6 +8,7 @@ import { connectDatabase } from "../database/client.ts";
 import { sql } from "drizzle-orm";
 import { createClient } from "@supabase/supabase-js";
 import { databasePrivileges, isRestrictedRuntime } from "../server/foundation/database-security.ts";
+import { loadSelectedEnvironment, selectedEnvironmentFile } from "../server/environment.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const exec = promisify(execFile);
@@ -24,9 +25,10 @@ function safeError(error) {
 }
 
 try {
-  loadEnvFile(new URL(`../${process.env.ERP_ENV_FILE || ".env"}`, import.meta.url));
+  if (!selectedEnvironmentFile()) throw new Error("Select the environment with npm run check:backend.");
+  loadSelectedEnvironment();
 } catch {
-  record("FAIL", "Local configuration", "Could not load .env");
+  record("FAIL", "Local configuration", "Could not load the explicitly selected private environment; use npm run check:backend.");
   process.exit(1);
 }
 
@@ -40,7 +42,7 @@ if (missing.length) {
 }
 record("PASS", "Required variables", "All present; values withheld");
 
-const text = await readFile(new URL(`../${process.env.ERP_ENV_FILE || ".env"}`, import.meta.url), "utf8");
+const text = await readFile(selectedEnvironmentFile(), "utf8");
 record(/^\s*\*#/m.test(text) ? "WARN" : "PASS", "Comment syntax", "Use plain # comments, not Markdown");
 record(/password\s*:/i.test(text) ? "WARN" : "PASS", "Password comments", "Do not keep plaintext passwords in comments");
 record(process.env.VITE_API_BASE_URL ? "WARN" : "PASS", "API base", "Same-origin deployments use a blank API base");

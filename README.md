@@ -24,6 +24,8 @@ On `dev`, the launcher reads staging credentials and starts localhost:5178. On `
 
 Private configuration lives in ignored `artifacts/private` files, not Git. `.env.example` documents the variables. The files are already prepared on this machine; a fresh clone needs matching credentials supplied securely. Prototype has its own branch-specific instructions and demo accounts; this source tree never starts the mock API.
 
+Root `.env` and `.env.local` are not loaded. `npm run cleanup:test-artifacts` audits disposable test images/build copies; add `-- -Apply` to remove them without deleting credentials/backups. Repository/folder renaming instructions: [RENAME_PROJECT.md](RENAME_PROJECT.md).
+
 ## Checks
 
 ```powershell

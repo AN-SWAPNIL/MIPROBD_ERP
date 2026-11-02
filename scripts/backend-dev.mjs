@@ -18,23 +18,26 @@ const apiPort = Number(process.env.BACKEND_API_PORT ?? 4178);
 process.env.VITE_BACKEND_MODE = "foundation";
 process.env.VITE_DEMO_MODE = "false";
 const env = { ...process.env, ERP_BACKEND_MODE: "foundation", DEMO_MODE: "false", VITE_DEMO_MODE: "false", API_PORT: String(apiPort), APP_URL: `http://localhost:${port}` };
-const api = spawn(process.execPath, ["--import", "tsx", "server/index.ts"], { env, stdio: "inherit" });
-const web = await createServer({ cacheDir: `node_modules/.vite-backend-${port}`, server: { host: "localhost", port, strictPort: true, proxy: { "/api": { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true } } } });
+const apiOnly = process.argv.includes("--api-only");
+const webOnly = process.argv.includes("--web-only");
+if (apiOnly && webOnly) throw new Error("Choose API-only or web-only, not both.");
+const api = webOnly ? undefined : spawn(process.execPath, ["--import", "tsx", "server/index.ts"], { env, stdio: "inherit" });
+const web = apiOnly ? undefined : await createServer({ cacheDir: `node_modules/.vite-backend-${port}`, server: { host: "localhost", port, strictPort: true, proxy: { "/api": { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true } } } });
 let stopping = false;
 async function stop(code = 0) {
   if (stopping) return;
   stopping = true;
-  await web.close();
-  api.kill();
+  await web?.close();
+  api?.kill();
   process.exitCode = code;
 }
 process.on("SIGINT", () => void stop());
 process.on("SIGTERM", () => void stop());
-api.on("error", () => void stop(1));
-api.on("exit", (code) => { if (!stopping) void stop(code ?? 1); });
+api?.on("error", () => void stop(1));
+api?.on("exit", (code) => { if (!stopping) void stop(code ?? 1); });
 try {
-  await web.listen();
-  console.log(`Foundation workspace: http://localhost:${port}/login`);
+  await web?.listen();
+  console.log(apiOnly ? `Foundation API: http://localhost:${apiPort}` : `Foundation workspace: http://localhost:${port}/login`);
   console.log("Configure APP_URL and the Supabase Auth redirect allowlist to this origin before accepting invitations.");
 } catch (error) {
   await stop(1);

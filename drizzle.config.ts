@@ -1,9 +1,7 @@
-import { loadEnvFile } from "node:process";
 import { defineConfig } from "drizzle-kit";
+import { loadSelectedEnvironment } from "./server/environment.js";
 
-try { loadEnvFile(); } catch (error) {
-  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-}
+loadSelectedEnvironment();
 if (!process.env.DATABASE_MIGRATION_URL) throw new Error("DATABASE_MIGRATION_URL is required");
 export default defineConfig({
   schema: "./database/schema.ts",

@@ -6,6 +6,7 @@ import { basename, isAbsolute, relative, resolve } from "node:path";
 const privateRoots = new Set(["artifacts", "files", "server", "database", "scripts", ".git", ".vercel", ".supabase", ".codex", ".agents", ".aws"]);
 
 export default defineConfig({
+  envDir: false,
   plugins: [{
     name: "private-workspace-boundary",
     enforce: "pre",

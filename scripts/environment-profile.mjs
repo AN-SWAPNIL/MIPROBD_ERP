@@ -6,6 +6,10 @@ export function profileForBranch(branch) {
   return Object.entries(environments.profiles).find(([, profile]) => profile.branch === branch);
 }
 
+export function matchesLinkedRepository(link) {
+  return link?.type === "github" && String(link.repoId) === String(environments.repositoryId);
+}
+
 export function validateProfile(profile, env, { hosted = false } = {}) {
   if (profile.mode !== "foundation") throw new Error("The mock prototype runs only from its separate branch.");
   if (env.ERP_BACKEND_MODE !== "foundation" || env.VITE_BACKEND_MODE !== "foundation" || env.DEMO_MODE !== "false" || env.VITE_DEMO_MODE !== "false") throw new Error("Real ERP environments require foundation mode and disabled demo identities.");

@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { environments } from "./environment-profile.mjs";
+import { environments, matchesLinkedRepository } from "./environment-profile.mjs";
 import { run } from "./uat-vercel.mjs";
 
 const apply = process.argv.includes("--apply");
@@ -12,7 +12,7 @@ const records = [];
 for (const profile of Object.values(environments.profiles)) {
   let project = JSON.parse(run(["api", `/v9/projects/${profile.projectId}`, "--raw"]));
   if (project.id !== profile.projectId || project.name !== profile.project || project.accountId !== environments.teamId) throw new Error("Project ownership or target mismatch; stopped.");
-  if (project.link && (project.link.type !== "github" || `${project.link.org}/${project.link.repo}` !== environments.repository)) throw new Error("Unexpected linked repository; refusing to replace it.");
+  if (project.link && !matchesLinkedRepository(project.link)) throw new Error("Unexpected linked repository identity; refusing to replace it.");
   const envs = JSON.parse(run(["api", `/v9/projects/${profile.projectId}/env`, "--raw"])).envs;
   const prohibited = envs.filter(e => profile.mode === "mock" ? /SUPABASE|DATABASE|CRON_SECRET|SMTP_|SUPER_ADMIN/.test(e.key) : /^(DATABASE_URL|DATABASE_MIGRATION_URL|SUPER_ADMIN_NAME|SUPER_ADMIN_EMAIL)$/.test(e.key));
   if (prohibited.length) throw new Error(`Unexpected privileged configuration on ${profile.project}; manual review required.`);
@@ -27,7 +27,7 @@ for (const profile of Object.values(environments.profiles)) {
     run(["api", `/v9/projects/${project.id}/branch`, "--method", "PATCH", "--input", "-", "--raw"], JSON.stringify({ branch: profile.branch }));
     run(["api", `/v9/projects/${project.id}`, "--method", "PATCH", "--input", "-", "--raw"], JSON.stringify({ commandForIgnoringBuildStep: ignoreCommand, previewDeploymentsDisabled: true }));
     project = JSON.parse(run(["api", `/v9/projects/${project.id}`, "--raw"]));
-    if (project.link?.productionBranch !== profile.branch || project.commandForIgnoringBuildStep !== ignoreCommand || !project.previewDeploymentsDisabled) throw new Error("Deployment isolation verification failed.");
+    if (!matchesLinkedRepository(project.link) || project.link.productionBranch !== profile.branch || project.commandForIgnoringBuildStep !== ignoreCommand || !project.previewDeploymentsDisabled) throw new Error("Deployment isolation verification failed.");
   }
   records.push({ project: profile.project, branch: project.link?.productionBranch ?? null, expectedBranch: profile.branch, linked: Boolean(project.link), previewsDisabled: project.previewDeploymentsDisabled === true, supabaseRef: profile.supabaseRef });
 }

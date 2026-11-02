@@ -13,7 +13,8 @@ const cli=join(dirname(cliPath),"node_modules","vercel","dist","index.js");
 function run(args,input){try{return execFileSync(process.execPath,[cli,...args,"--scope",scope],{input,encoding:"utf8",stdio:["pipe","pipe","pipe"],timeout:60000});}catch{throw new Error("Staging configuration command failed. Provider output withheld to protect secrets.");}}
 const project=JSON.parse(run(["api",`/v9/projects/${link.projectId}`,"--raw"]));
 if(project.name!==target||project.id!==link.projectId)throw new Error("Staging project identity mismatch.");
-const local=parseEnv(await readFile(new URL(".env",root),"utf8"));
+const local=parseEnv(await readFile(new URL("artifacts/private/staging.env",root),"utf8"));
+if(local.SUPABASE_URL!=="https://hyttuapvvqqxcyhojbwq.supabase.co")throw new Error("Staging credentials belong to another Supabase project.");
 const runtime=parseEnv(await readFile(new URL("artifacts/private/runtime-database.env",root),"utf8"));
 const database=runtime.DATABASE_RUNTIME_URL;
 if(!database||!new URL(database).username.startsWith("mipro_runtime"))throw new Error("A separate restricted runtime connection is required; migration credentials will not be deployed.");

@@ -20,9 +20,9 @@ console.log(`${name}: ${branch} -> ${profile.supabaseRef}; localhost:${profile.w
 if (!args.includes("--check")) {
   const toolIndex = args.indexOf("--tool");
   const tool = toolIndex < 0 ? undefined : args[toolIndex + 1];
-  const allowedTools = new Set(["scripts/database.ts", "scripts/migration-integrity.ts", "scripts/runtime-database.ts", "scripts/backend-bootstrap.ts", "scripts/storage-backup.ts", "scripts/verify-backups.ts", "scripts/backend-readiness.mjs", "scripts/opening-profile.ts", "scripts/opening-storage.ts", "scripts/invitation-worker.ts"]);
+  const allowedTools = new Set(["scripts/database.ts", "scripts/migration-integrity.ts", "scripts/runtime-database.ts", "scripts/backend-bootstrap.ts", "scripts/storage-backup.ts", "scripts/verify-backups.ts", "scripts/backend-readiness.mjs", "scripts/opening-profile.ts", "scripts/opening-storage.ts", "scripts/invitation-worker.ts", "scripts/backend-test-cleanup.ts", "scripts/visit-evidence-cleanup.ts", "scripts/visit-readiness.ts", "scripts/print-layout-check.ts", "node_modules/drizzle-kit/bin.cjs"]);
   if (toolIndex >= 0 && !allowedTools.has(tool)) throw new Error("Unsupported environment-scoped tool.");
-  const command = tool ? ["--import", "tsx", fileURLToPath(new URL(tool, root)), ...args.slice(toolIndex + 2)] : [fileURLToPath(new URL("scripts/backend-dev.mjs", root))];
+  const command = tool ? ["--import", "tsx", fileURLToPath(new URL(tool, root)), ...args.slice(toolIndex + 2)] : [fileURLToPath(new URL("scripts/backend-dev.mjs", root)), ...args];
   const child = spawn(process.execPath, command, { cwd: root, env: { ...process.env, ...env }, stdio: "inherit" });
   child.on("error", () => { console.error("Environment process could not start."); process.exitCode = 1; });
   child.on("exit", (code) => { process.exitCode = code ?? 1; });

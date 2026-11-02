@@ -1,10 +1,8 @@
-import { loadEnvFile } from "node:process";
 import { z } from "zod";
 import { resolveBackendMode } from "./runtime-mode.js";
+import { loadSelectedEnvironment } from "./environment.js";
 
-try { loadEnvFile(process.env.ERP_ENV_FILE || undefined); } catch (error) {
-  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-}
+loadSelectedEnvironment();
 
 const schema = z.object({
   SUPABASE_URL: z.url(),

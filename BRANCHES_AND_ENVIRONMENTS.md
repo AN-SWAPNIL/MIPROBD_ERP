@@ -26,7 +26,7 @@ Checking out a branch does **not** switch an ignored `.env`. Git does not own th
 | UAT | `artifacts/private/uat.env` | `artifacts/private/uat-runtime.env` |
 | Prototype | Non-secret defaults in `config/prototype.env` | No database credentials |
 
-The old root `.env` is preserved for existing setup tools; the new launcher does not use it to select a database. `.env.example` contains placeholders, not credentials. Each Vercel project stores its own runtime variables independently. Migration/setup credentials remain local.
+Root `.env` and `.env.local` are not read by the ERP or Vite. Their previous local contents were moved to ignored `artifacts/private/retired-root-env` as a recovery copy. Active configuration uses only the named files above or Vercel's platform variables. `.env.example` remains a placeholder reference. Migration/setup credentials remain local.
 
 ## Local Commands
 
@@ -57,5 +57,11 @@ Each Vercel project is Git-linked to this repository with its own Production Bra
 `node scripts/configure-branch-deployments.mjs` audits without changes. Add `--apply` to configure these three identity-checked existing projects. It never buys plans, migrates databases, resets data, rotates secrets or changes Auth redirects.
 
 The local prototype worktree is `artifacts/worktrees/prototype`. Use `git worktree list` to inspect it; do not force-switch a branch already checked out there.
+
+## Cleanup And Renaming
+
+`npm run cleanup:test-artifacts` previews removal of generated screenshots and disposable browser-build copies. Add `-- -Apply` to perform cleanup. Credentials, backups, release/recovery evidence, worktrees, requirements, public assets and logs are protected. The initial cleanup removed 633 test images and eight build copies (about 360 MiB); no company records were deleted.
+
+See [RENAME_PROJECT.md](RENAME_PROJECT.md) for GitHub/local-folder rename steps. The repository has not been renamed automatically, and no database/domain names need to change.
 
 References: [Vercel Git](https://vercel.com/docs/git), [branch controls](https://vercel.com/docs/project-configuration/git-configuration), [environment variables](https://vercel.com/docs/environment-variables).
