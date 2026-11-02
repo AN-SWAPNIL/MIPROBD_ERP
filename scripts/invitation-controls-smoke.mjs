@@ -21,6 +21,7 @@ try {
         let data;
         if (path === "/api/me") data = session;
         else if (path === "/api/settings/invitations") data = { rows: removed ? [] : [row], total: removed ? 0 : 1, page: 1, pageSize: 25 };
+        else if (path === "/api/workforce/employees") data = { rows: removed ? [] : [{ id: row.employeeId, name: row.employeeName, employeeCode: "UI-001", title: "Marketing Executive", department: "Sales", territory: "North", phone: "", role: "Sales Executive", status: row.employeeStatus, managerId: null, managerName: "Unassigned", version: 1, avatarId: null }], total: removed ? 0 : 1, page: 1, pageSize: 25 };
         else if (path.startsWith(`/api/settings/invitations/${row.id}`)) {
           const body = request.postDataJSON();
           assert.deepEqual(Object.keys(body), ["updatedAt"]); assert.equal(body.updatedAt, row.updatedAt);
@@ -48,15 +49,22 @@ try {
       dialog = page.getByRole("dialog", { name: "Cancel Invitation", exact: true });
       await dialog.getByRole("button", { name: "Cancel invitation", exact: true }).click();
       const remove = page.getByRole("button", { name: "Delete invitation", exact: true });
+      await remove.waitFor();
+      await page.getByRole("button", { name: "Employees", exact: true }).click();
+      await page.getByText(row.employeeName, { exact: true }).first().waitFor();
+      await page.goto(`${origin}/backend/employees/invitations`);
       await remove.waitFor(); await remove.click();
       dialog = page.getByRole("dialog", { name: "Delete Invitation", exact: true });
       assert.equal(await dialog.locator("input, textarea").count(), 0);
       await page.screenshot({ path: `artifacts/backend/invitation-controls/delete-${width}.png`, fullPage: true });
       await dialog.getByRole("button", { name: "Delete invitation", exact: true }).click();
       await page.getByText("No invitations match this status.", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Employees", exact: true }).click();
+      await page.getByText("No employees match this search.", { exact: true }).waitFor();
+      assert.equal(await page.getByText(row.employeeName, { exact: true }).count(), 0);
       assert.deepEqual(mutations, ["POST", "DELETE"]); assert.deepEqual(errors, []);
       assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth + 1), true);
-      console.log(`PASS: ${width}px invitation confirmation/cancel/delete, no reason field, no overflow; intercepted API fixtures only.`);
+      console.log(`PASS: ${width}px invitation confirmation/cancel/delete and employee-directory removal, no reason field, no overflow; intercepted API fixtures only.`);
     } finally { await context.close(); }
   }
 } finally { await browser.close(); }

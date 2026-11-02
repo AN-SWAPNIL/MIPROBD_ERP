@@ -113,13 +113,11 @@ export function createInvitationOutboxRouter(ctx: Context) {
         if (!(action === "cancel" ? allowed.canCancel : allowed.canDelete)) throw new HttpError(409, action === "cancel" ? "Only pending onboarding can be cancelled. Accepted employees must be managed through Access." : "Cancel the invitation and block its pending account before deleting it.");
         const now = new Date(Math.max(Date.now(), job.updatedAt.getTime() + 1));
         await tx.update(invitationJobs).set({ state: "Cancelled", lastCode: action === "delete" ? deletedInvitationCode : "CANCELLED_BY_ADMIN", leaseToken: null, leaseUntil: null, updatedAt: now }).where(eq(invitationJobs.id, id));
-        if (action === "cancel") {
-          await tx.update(employees).set({ status: "Inactive", version: sql`${employees.version} + 1`, updatedAt: now }).where(eq(employees.id, employee.id));
-          await tx.update(sessions).set({ revokedAt: now }).where(eq(sessions.employeeId, employee.id));
-        }
+        await tx.update(employees).set({ status: "Inactive", version: sql`${employees.version} + 1`, updatedAt: now }).where(eq(employees.id, employee.id));
+        await tx.update(sessions).set({ revokedAt: now }).where(eq(sessions.employeeId, employee.id));
         await audit(tx, user.id, action === "delete" ? "Invitation removed" : "Invitation cancelled", "Employee", employee.id, { jobId: id, previousState: job.state, previousCode: job.lastCode, attempts: job.attempts, sentAt: job.sentAt?.toISOString() ?? null, employeeStatus: employee.status });
       });
-      res.json({ success: true, data: { id }, message: action === "cancel" ? "Invitation cancelled; the pending employee is inactive and cannot enter the ERP. An email already in flight cannot be recalled." : "Invitation removed from the delivery list; employee and audit history retained." });
+      res.json({ success: true, data: { id }, message: action === "cancel" ? "Invitation cancelled; the pending employee is inactive and cannot enter the ERP. An email already in flight cannot be recalled." : "Invitation and employee removed from their lists; audit history retained." });
     });
   }
   router.post("/settings/invitations/process", async (req, res) => {

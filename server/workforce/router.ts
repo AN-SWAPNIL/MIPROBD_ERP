@@ -10,6 +10,7 @@ import { createPlanningRouter } from "./planning.js";
 import { createWorkforceEmployeeRouter, employeeColumns } from "./employees.js";
 import { marketingScope } from "./scope.js";
 import { createVisitRouter } from "./visits.js";
+import { visibleEmployee } from "../foundation/employee-visibility.js";
 
 export function createWorkforceRouter(ctx:Context) {
   const router=Router();
@@ -18,7 +19,7 @@ export function createWorkforceRouter(ctx:Context) {
   router.get("/workforce/references",async(_req,res)=>{
     const user=identity(res).user; assertAllowed(hasEffectivePermission(user,"marketing"));
     const data=await ctx.db.transaction(async(tx)=>{
-      const employees=(await tx.execute(sql`select ${employeeColumns} from erp_private.employees e left join erp_private.employees m on m.id=e.manager_id where e.status='Active' and ${marketingScope(user,sql`e.id`)} order by e.name,e.id limit 501`)).rows;
+      const employees=(await tx.execute(sql`select ${employeeColumns} from erp_private.employees e left join erp_private.employees m on m.id=e.manager_id where e.status='Active' and ${visibleEmployee(sql`e.id`)} and ${marketingScope(user,sql`e.id`)} order by e.name,e.id limit 501`)).rows;
       const customers=hasEffectivePermission(user,"customers")?(await tx.execute(sql`select c.id,c.name,c.assigned_sales_user_id as "assignedTo" from erp_private.customers c where c.active and ${marketingScope(user,sql`c.assigned_sales_user_id`)} order by c.name,c.id limit 501`)).rows:[];
       const leads=(await tx.execute(sql`select l.id,l.organization name,l.assigned_to as "assignedTo" from erp_private.marketing_leads l where l.stage<>'LOST' and ${marketingScope(user,sql`l.assigned_to`)} order by l.organization,l.id limit 501`)).rows;
       const products=(await tx.execute(sql`select id,code,name from erp_private.products where active order by code,id limit 501`)).rows;

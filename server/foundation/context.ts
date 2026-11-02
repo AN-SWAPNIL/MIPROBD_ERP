@@ -9,6 +9,7 @@ import type { User } from "../../src/types/index.js";
 import { HttpError } from "./errors.js";
 import { sessionSecurity } from "./assurance.js";
 import type { Session } from "../../src/types/index.js";
+import { visibleEmployee } from "./employee-visibility.js";
 
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 export function toUser(row: typeof employees.$inferSelect): User {
@@ -41,7 +42,7 @@ export async function authenticate(ctx: Context, req: Request, allowRecovery = f
   if (error || !data.user?.email_confirmed_at) throw new HttpError(401, "Your session has expired. Please sign in again.");
   const [row] = await ctx.db.select({ session: sessions, employee: employees }).from(sessions)
     .innerJoin(employees, eq(sessions.employeeId, employees.id))
-    .where(and(eq(sessions.tokenHash, digest(token)), eq(employees.authUserId, data.user.id), eq(employees.status, "Active"), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date())));
+    .where(and(eq(sessions.tokenHash, digest(token)), eq(employees.authUserId, data.user.id), eq(employees.status, "Active"), visibleEmployee(), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date())));
   if (!row || (row.session.purpose === "recovery" && !allowRecovery)) throw new HttpError(401, "This ERP session is no longer active.");
   const user = toUser(row.employee); const security = sessionSecurity(user, data.user, token, ctx.config.requirePrivilegedMfa);
   if (!allowMfaSetup && security.required && security.assurance !== "aal2") throw new HttpError(428, "Authenticator verification is required before accessing ERP records.");

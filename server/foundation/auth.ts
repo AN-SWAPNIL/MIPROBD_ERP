@@ -8,6 +8,7 @@ import { changePasswordSchema, exchangeSchema, loginSchema, recoverySchema, rese
 import { HttpError } from "./errors.js";
 import { sessionSecurity } from "./assurance.js";
 import { clearSessionCookies, refreshCookie, sessionCookie, writeSessionCookies } from "./session-cookies.js";
+import { visibleEmployee } from "./employee-visibility.js";
 
 export function createAuthRouter(ctx: Context) {
   const router = Router();
@@ -17,7 +18,7 @@ export function createAuthRouter(ctx: Context) {
     const { data, error } = await ctx.admin.auth.getUser(session.access_token);
     if (error || !data.user?.email_confirmed_at) throw new HttpError(401, "Account verification is required.");
     const employee = await ctx.db.transaction(async (tx) => {
-      const [employee] = await tx.select().from(employees).where(eq(employees.authUserId, data.user.id)).for("update");
+      const [employee] = await tx.select().from(employees).where(and(eq(employees.authUserId, data.user.id), visibleEmployee())).for("update");
       if (!employee || employee.status !== "Active") throw new HttpError(403, "An active assigned ERP employee account is required.");
       const [row] = await tx.insert(sessions).values({ employeeId: employee.id, tokenHash: digest(session.access_token), purpose, expiresAt: new Date(session.expires_at! * 1000) }).returning();
       await audit(tx, employee.id, purpose === "recovery" ? "Recovery verified" : "Signed in", "Session", row.id);
@@ -45,7 +46,7 @@ export function createAuthRouter(ctx: Context) {
     if (!saved[refreshCookie] || !saved[sessionCookie]) throw new HttpError(401, "Please sign in again.");
     const result = await ctx.db.transaction(async (tx) => {
       const [row] = await tx.select({ session: sessions, employee: employees }).from(sessions).innerJoin(employees, eq(sessions.employeeId, employees.id))
-        .where(and(eq(sessions.id, saved[sessionCookie]!), isNull(sessions.revokedAt))).for("update");
+        .where(and(eq(sessions.id, saved[sessionCookie]!), visibleEmployee(), isNull(sessions.revokedAt))).for("update");
       if (!row || row.employee.status !== "Active" || row.session.createdAt.getTime() < Date.now() - 30 * 86400000) throw new HttpError(401, "Please sign in again.");
       const { data, error } = await ctx.publicClient().auth.refreshSession({ refresh_token: saved[refreshCookie]! });
       if (error || !data.session || data.user?.id !== row.employee.authUserId) throw new HttpError(401, "Please sign in again.");
@@ -74,7 +75,7 @@ export function createAuthRouter(ctx: Context) {
   router.post("/forgot-password", async (req, res) => {
     const { email } = recoverySchema.parse(req.body);
     await rateLimit(ctx, `recovery:${req.ip}`, 10);
-    const [employee] = await ctx.db.select().from(employees).where(and(eq(employees.email, email.toLowerCase()), eq(employees.status, "Active")));
+    const [employee] = await ctx.db.select().from(employees).where(and(eq(employees.email, email.toLowerCase()), eq(employees.status, "Active"), visibleEmployee()));
     if (employee) {
       const { error } = await ctx.publicClient().auth.resetPasswordForEmail(email, { redirectTo: `${ctx.config.origin}/reset-password` });
       await audit(ctx.db, employee.id, error ? "Recovery delivery failed" : "Recovery requested", "Employee", employee.id);
@@ -91,7 +92,7 @@ export function createAuthRouter(ctx: Context) {
     const { data: verified, error: verificationError } = await ctx.admin.auth.getUser(data.session.access_token);
     if (verificationError || !verified.user?.email_confirmed_at) throw new HttpError(401, "Email verification required.");
     await ctx.db.transaction(async (tx) => {
-      const [row] = await tx.select().from(employees).where(eq(employees.authUserId, verified.user.id)).for("update");
+      const [row] = await tx.select().from(employees).where(and(eq(employees.authUserId, verified.user.id), visibleEmployee())).for("update");
       if (row?.status === "Pending") {
         await tx.update(employees).set({ status: "Active", updatedAt: new Date() }).where(eq(employees.id, row.id));
         await audit(tx, row.id, "Invitation accepted", "Employee", row.id);

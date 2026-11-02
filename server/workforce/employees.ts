@@ -8,6 +8,7 @@ import { lockActor } from "../operations/common.js";
 import { employeeProfileInput, listInput } from "./contracts.js";
 import { assertEmployeeScope, directoryScope, searchPattern } from "./scope.js";
 import { checkVersion, pageQuery } from "./common.js";
+import { visibleEmployee } from "../foundation/employee-visibility.js";
 
 export const employeeColumns = sql`e.id,e.name,e.employee_code as "employeeCode",e.title,e.department,e.territory,e.phone,e.role,e.status,e.manager_id as "managerId",coalesce(m.name,'Unassigned') as "managerName",e.version,
   (select d.id::text from erp_private.documents d where d.employee_id=e.id and d.purpose='employee-avatar' and d.status='Attached' order by d.attached_at desc,d.id desc limit 1) as "avatarId"`;
@@ -29,7 +30,8 @@ export function createWorkforceEmployeeRouter(ctx:Context) {
     await ctx.db.transaction(async(tx)=>{
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended('employee-hierarchy',0))`);
       const user=await lockActor(tx,actor,"users","edit"); assertAllowed(canManageEmployees(user,"edit")&&hasEffectivePermission(user,"users"));
-      const [row]=await tx.select().from(employees).where(eq(employees.id,id)).for("update");
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${id},77612014))`);
+      const [row]=await tx.select().from(employees).where(and(eq(employees.id,id),visibleEmployee())).for("update");
       if(!row)throw new HttpError(404,"Employee not found."); assertAllowed(canManageTargetUser(user,toUser(row))); checkVersion(row.version,input.version);
       const managerChanged=row.managerId!==input.managerId;
       if(managerChanged)assertAllowed(user.role==="Super Admin","Only Super Admin can change reporting assignments.");
@@ -48,7 +50,7 @@ export function createWorkforceEmployeeRouter(ctx:Context) {
   });
   router.get("/workforce/employees/:id/access",async(req,res)=>{
     const user=identity(res).user; assertAllowed(canManageUserAccess(user)&&hasEffectivePermission(user,"users"));
-    const [row]=await ctx.db.select().from(employees).where(eq(employees.id,String(req.params.id)));
+    const [row]=await ctx.db.select().from(employees).where(and(eq(employees.id,String(req.params.id)),visibleEmployee()));
     if(!row)throw new HttpError(404,"Employee not found."); assertAllowed(user.id===row.id || canManageTargetUser(user,toUser(row)));
     res.json({success:true,data:{...toUser(row),version:row.version},message:"Current employee access loaded"});
   });
