@@ -20,10 +20,11 @@ export async function queueInvitation(tx: Transaction, employeeId: string, reque
   assertAllowed(requester && canManageEmployees(toUser(requester), "create") && canAssignRole(toUser(requester), employee.role));
   const [existing] = await tx.select().from(invitationJobs).where(eq(invitationJobs.employeeId, employeeId)).for("update");
   const now = new Date();
-  if (existing && (existing.state === "Processing" && existing.leaseUntil && existing.leaseUntil > now || existing.updatedAt.getTime() > now.getTime() - 60000)) throw new HttpError(429, "Wait one minute before requesting another invitation.");
-  const values = { requestedBy, state: "Queued" as const, attempts: 0, nextAttemptAt: now, leaseToken: null, leaseUntil: null, lastCode: "", updatedAt: now };
+  const replacingRemoved = existing?.state === "Cancelled" && existing.lastCode === deletedInvitationCode;
+  if (existing && !replacingRemoved && (existing.state === "Processing" && existing.leaseUntil && existing.leaseUntil > now || existing.updatedAt.getTime() > now.getTime() - 60000)) throw new HttpError(429, "Wait one minute before requesting another invitation.");
+  const values = { requestedBy, state: "Queued" as const, attempts: 0, nextAttemptAt: now, leaseToken: null, leaseUntil: null, lastCode: "", sentAt: null, updatedAt: now };
   const [job] = existing ? await tx.update(invitationJobs).set(values).where(eq(invitationJobs.id, existing.id)).returning() : await tx.insert(invitationJobs).values({ ...values, employeeId }).returning();
-  await audit(tx, requestedBy, "Invitation queued", "Employee", employeeId, { jobId: job.id });
+  await audit(tx, requestedBy, "Invitation queued", "Employee", employeeId, { jobId: job.id, previousState: existing?.state ?? null, previousAttempts: existing?.attempts ?? 0, previousSentAt: existing?.sentAt?.toISOString() ?? null });
   return job.id;
 }
 

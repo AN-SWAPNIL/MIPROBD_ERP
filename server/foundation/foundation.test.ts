@@ -10,7 +10,7 @@ import { bearer, createContext, digest, toUser } from "./context.js";
 import { createFoundationRouter } from "./router.js";
 import { accessSchema, profileSchema, uploadSchema } from "./contracts.js";
 import { matchesFileSignature } from "./documents.js";
-import { deliverInvitation } from "./invitations.js";
+import { deliverInvitation, retireCancelledIdentity } from "./invitations.js";
 
 test("bearer identity never falls back to role or user headers", () => {
   const req = { get: () => undefined, headers: { "x-user-id": "u-super", "x-role": "Super Admin" } } as unknown as Request;
@@ -66,6 +66,20 @@ test("expired employee invitations can be retried without changing their linked 
   assert.equal(invites, 1);
   deliveryFails = true;
   assert.deepEqual(await deliverInvitation(ctx, { ...employee, authUserId: null }), { sent: false, authUserId: null, retryable: true, failureCode: "DELIVERY_FAILED" });
+});
+
+test("fresh onboarding retires only its matching old identity and fails closed for provider/mismatch errors", async () => {
+  let removed = 0; let missing = false; let mismatched = false; let unavailable = false;
+  const ctx = { admin: { auth: { admin: {
+    getUserById: async () => ({ data: { user: missing ? null : { email: mismatched ? "another@example.invalid" : "old@example.invalid" } }, error: missing ? { status: 404 } : null }),
+    deleteUser: async () => { removed++; return { error: unavailable ? { status: 500 } : null }; }
+  } } } } as unknown as Parameters<typeof retireCancelledIdentity>[0];
+  const employee = { email: "old@example.invalid", authUserId: "old-identity" };
+  await retireCancelledIdentity(ctx, { ...employee, authUserId: null }); assert.equal(removed, 0);
+  mismatched = true; await assert.rejects(retireCancelledIdentity(ctx, employee), /does not match/); assert.equal(removed, 0);
+  mismatched = false; missing = true; await retireCancelledIdentity(ctx, employee); assert.equal(removed, 0);
+  missing = false; unavailable = true; await assert.rejects(retireCancelledIdentity(ctx, employee), /could not be replaced/);
+  unavailable = false; await retireCancelledIdentity(ctx, employee); assert.equal(removed, 2);
 });
 
 test("hosted foundation: real auth, persisted profiles, access revocation, private storage and append-only audit", { skip: process.env.RUN_HOSTED_BACKEND_TESTS !== "true", timeout: 180000 }, async () => {

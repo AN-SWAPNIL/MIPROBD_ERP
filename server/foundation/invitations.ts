@@ -4,6 +4,16 @@ import { HttpError } from "./errors.js";
 type PendingEmployee = { email: string; name: string; authUserId: string | null };
 type DeliveryResult = { sent: boolean; authUserId: string | null; retryable?: boolean; failureCode?: string };
 
+export async function retireCancelledIdentity(ctx: Pick<Context, "admin">, employee: Pick<PendingEmployee, "email" | "authUserId">) {
+  if (!employee.authUserId) return;
+  const { data, error } = await ctx.admin.auth.admin.getUserById(employee.authUserId);
+  if (error?.status === 404) return;
+  if (error || !data.user) throw new HttpError(502, "The cancelled setup identity could not be checked. Try again later.");
+  if (data.user.email?.toLowerCase() !== employee.email.toLowerCase()) throw new HttpError(409, "The cancelled identity does not match this email. Administrator review is required.");
+  const { error: removalError } = await ctx.admin.auth.admin.deleteUser(employee.authUserId);
+  if (removalError && removalError.status !== 404) throw new HttpError(502, "The cancelled setup identity could not be replaced. No new invitation was queued; try again later.");
+}
+
 export async function deliverInvitation(ctx: Pick<Context, "admin" | "publicClient" | "config">, employee: PendingEmployee): Promise<DeliveryResult> {
   const redirectTo = `${ctx.config.origin}/reset-password`;
   if (employee.authUserId) {
