@@ -7,7 +7,7 @@ export function localApiRequest(url: string, peer: string, method: string, heade
   const target = new URL(url);
   if (target.protocol !== "http:" || target.hostname !== "127.0.0.1" || !/^127\.77\.\d{1,3}\.\d{1,3}$/.test(peer)) throw new Error("Test transport requires an isolated loopback address.");
   return new Promise((resolve, reject) => {
-    const req = request(target, { method, headers, localAddress: peer }, async (res) => {
+    const req = request(target, { method, headers: { ...headers, ...(body === undefined ? {} : { "Content-Length": String(Buffer.byteLength(body)) }) }, localAddress: peer }, async (res) => {
       try {
         const chunks: Buffer[] = []; let size = 0;
         for await (const chunk of res) { size += chunk.length; if (size > 8 * 1024 * 1024) { res.destroy(); throw new Error("Test response exceeds its bounded size."); } chunks.push(Buffer.from(chunk)); }

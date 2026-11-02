@@ -37,6 +37,7 @@
     "check:release": "tsx scripts/release-check.ts",
     "prepare:scheduled-deployment": "node scripts/prepare-job-config.mjs",
     "cleanup:test-artifacts": "powershell -NoProfile -File scripts/cleanup-test-artifacts.ps1",
+    "smoke:invitations": "node scripts/invitation-controls-smoke.mjs",
     "db:generate": "node scripts/run-environment.mjs --tool node_modules/drizzle-kit/bin.cjs generate",
     "db:backup": "node scripts/run-environment.mjs --tool scripts/database.ts backup",
     "db:verify": "node scripts/run-environment.mjs --tool scripts/migration-integrity.ts",

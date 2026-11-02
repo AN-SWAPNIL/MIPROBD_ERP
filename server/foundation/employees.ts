@@ -53,7 +53,7 @@ export function createEmployeeRouter(ctx: Context) {
       const [current] = await tx.select().from(employees).where(eq(employees.id, actor.user.id)).for("update");
       assertAllowed(current && canManageEmployees(toUser(current), "create") && canAssignRole(toUser(current), input.role));
       const [existing] = await tx.select().from(employees).where(eq(employees.email, input.email)).for("update");
-      if (existing) throw new HttpError(409, "This employee already exists. Use its invitation retry action.");
+      if (existing) throw new HttpError(409, existing.status === "Pending" ? "This employee already exists. Use its invitation retry action." : "This email already belongs to an employee. Review the existing employee account instead of creating a duplicate.");
       const [row] = await tx.insert(employees).values({ ...input, id: `emp-${randomUUID()}`, status: "Pending" }).returning();
       await audit(tx, current.id, "Employee invitation reserved", "Employee", row.id, { role: row.role });
       const jobId = await queueInvitation(tx, row.id, current.id);
