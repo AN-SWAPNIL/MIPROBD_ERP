@@ -2,7 +2,7 @@
 
 | Branch | Purpose | Website | Data |
 | --- | --- | --- | --- |
-| `prototype` | Frozen mock-only sales demonstration | https://medical-supplier-erp.vercel.app | Temporary synthetic records; no Supabase |
+| `prototype` | Frozen mock-only sales demonstration | https://mipro-erp-prototype.vercel.app | Temporary synthetic records; no Supabase |
 | `dev` | Real-backend staging and integration | https://mipro-erp-staging.vercel.app | Development Supabase `hyttuapvvqqxcyhojbwq` |
 | `main` | Client UAT release | https://mipro-erp.vercel.app | Isolated UAT Supabase `njbecypawzsuqiteooly` |
 
@@ -54,7 +54,9 @@ On `prototype`, run `npm ci` then `npm run dev`: localhost:5173 / API:4174, no S
 
 Each Vercel project is Git-linked to this repository with its own Production Branch. The stable staging project also uses Vercel's **Production** variable scope; this does not make it the company's production database. Preview deployments are disabled; a project-specific ignored-build command rejects other branches. The ERP build also rejects mismatched project IDs, Supabase references, privileged DB credentials and demo mode.
 
-`node scripts/configure-branch-deployments.mjs` audits without changes. Add `--apply` to configure these three identity-checked existing projects. It never buys plans, migrates databases, resets data, rotates secrets or changes Auth redirects.
+`node scripts/configure-branch-deployments.mjs` audits without changes. Add `--apply` to configure these three identity-checked existing projects, including refreshing a stale repository label after a rename. It never buys plans, migrates databases, resets data, rotates secrets or changes Auth redirects.
+
+The ignored `.vercel/project.json` is a CLI directory link, not a branch-aware setting. The main checkout is currently linked to `mipro-erp`; the prototype worktree is linked to `mipro-erp-prototype`. Do not run a bare deployment after switching branches without checking the project. Git-push deployments use the verified per-project branches instead.
 
 The local prototype worktree is `artifacts/worktrees/prototype`. Use `git worktree list` to inspect it; do not force-switch a branch already checked out there.
 
@@ -62,6 +64,6 @@ The local prototype worktree is `artifacts/worktrees/prototype`. Use `git worktr
 
 `npm run cleanup:test-artifacts` previews removal of generated screenshots and disposable browser-build copies. Add `-- -Apply` to perform cleanup. Credentials, backups, release/recovery evidence, worktrees, requirements, public assets and logs are protected. The initial cleanup removed 633 test images and eight build copies (about 360 MiB); no company records were deleted.
 
-See [RENAME_PROJECT.md](RENAME_PROJECT.md) for GitHub/local-folder rename steps. The repository has not been renamed automatically, and no database/domain names need to change.
+The GitHub repository is `AN-SWAPNIL/MIPROBD_ERP`; its immutable identity is unchanged. The replacement public demo project is `mipro-erp-prototype`, tracking only `prototype`. Staging/UAT retain their existing project IDs, branches and Supabase data. See [RENAME_PROJECT.md](RENAME_PROJECT.md) for local-folder rename and worktree repair steps.
 
 References: [Vercel Git](https://vercel.com/docs/git), [branch controls](https://vercel.com/docs/project-configuration/git-configuration), [environment variables](https://vercel.com/docs/environment-variables).

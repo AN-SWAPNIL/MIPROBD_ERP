@@ -23,6 +23,12 @@ for (const profile of Object.values(environments.profiles)) {
     await writeFile(new URL(`${profile.project}-${Date.now()}.json`, folder), JSON.stringify({ id: project.id, name: project.name, link: project.link, commandForIgnoringBuildStep: project.commandForIgnoringBuildStep, previewDeploymentsDisabled: project.previewDeploymentsDisabled }, null, 2), { mode: 0o600 });
     // Pause automatic builds while linking; restore only this project's approved branch.
     run(["api", `/v9/projects/${project.id}`, "--method", "PATCH", "--input", "-", "--raw"], JSON.stringify({ commandForIgnoringBuildStep: "exit 0", previewDeploymentsDisabled: true, autoExposeSystemEnvs: true }));
+    const [owner, repository] = environments.repository.split("/");
+    if (project.link && (project.link.repo !== repository || project.link.org !== owner)) {
+      // Reconnect only the already identity-checked repository after a GitHub rename.
+      run(["api", `/v9/projects/${project.id}/link`, "--method", "DELETE", "--dangerously-skip-permissions", "--raw"]);
+      project.link = undefined;
+    }
     if (!project.link) run(["api", `/v9/projects/${project.id}/link`, "--method", "POST", "--input", "-", "--raw"], JSON.stringify({ type: "github", repo: environments.repository }));
     run(["api", `/v9/projects/${project.id}/branch`, "--method", "PATCH", "--input", "-", "--raw"], JSON.stringify({ branch: profile.branch }));
     run(["api", `/v9/projects/${project.id}`, "--method", "PATCH", "--input", "-", "--raw"], JSON.stringify({ commandForIgnoringBuildStep: ignoreCommand, previewDeploymentsDisabled: true }));

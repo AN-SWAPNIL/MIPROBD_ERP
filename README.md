@@ -6,7 +6,7 @@ React/Vite/TypeScript frontend and Express serverless API, with hosted Supabase 
 
 | Branch | Site | Backend |
 | --- | --- | --- |
-| `prototype` | https://medical-supplier-erp.vercel.app | Mock-only; no database |
+| `prototype` | https://mipro-erp-prototype.vercel.app | Mock-only; no database |
 | `dev` | https://mipro-erp-staging.vercel.app | Development Supabase |
 | `main` | https://mipro-erp.vercel.app | Isolated client UAT Supabase |
 

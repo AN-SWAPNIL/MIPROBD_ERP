@@ -1,10 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { environments } from "./environment-profile.mjs";
 
 // This creates local deployment configuration only; it neither deploys nor sends mail.
 const root = new URL("../", import.meta.url);
 const link = JSON.parse(await readFile(new URL(".vercel/project.json", root), "utf8"));
-if (!link.projectName || link.projectName === "medical-supplier-erp") throw new Error("Link the intended isolated staging/production project first; the old public demo is not a job target");
+if (!Object.values(environments.profiles).some(profile => profile.mode === "foundation" && profile.projectId === link.projectId && profile.project === link.projectName)) throw new Error("Link an identity-checked staging/UAT project first; a public demo is not a job target");
 const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], { encoding: "utf8" });
 if (dirty.trim()) throw new Error("Review and commit the release before preparing its scheduled deployment configuration");
 const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();

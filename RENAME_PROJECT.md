@@ -1,19 +1,19 @@
 # Rename The Repository And Local Folder
 
-The requested target is **MIPRO_ERP**. No repository or folder has been renamed by this update. Do this when local servers and editors are closed; the current workspace contains a linked prototype checkout.
+The GitHub repository is now **AN-SWAPNIL/MIPROBD_ERP** (verified by repository ID `1277933275`). The local folder can independently be named **MIPRO_ERP**. Do local moves when servers and editors are closed; the workspace contains a linked prototype checkout.
 
-Renaming does not require a new database, new Vercel projects, a data migration or different login accounts. Keep the existing Supabase references, Vercel project IDs, domains and private environment filenames.
+Renaming does not require a new database, a data migration or different login accounts. Staging and UAT keep their existing Supabase references, Vercel project IDs, domains and private environment filenames. The deleted demo Vercel project has been replaced by `mipro-erp-prototype` (`prototype` branch).
 
 ## 1. Rename On GitHub
 
-Open `AN-SWAPNIL/Medical_Supplier_ERP` -> **Settings -> General -> Repository name**, enter `MIPRO_ERP`, and select **Rename**. GitHub retains repository history and redirects the old repository URL, but recommends updating local remotes. Do not reuse the old name for another repository. [GitHub instructions](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository).
+Already completed by the owner: `AN-SWAPNIL/MIPROBD_ERP`. GitHub retains repository history and redirects the old repository URL, but recommends updating local remotes. Do not reuse the old name for another repository. [GitHub instructions](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository).
 
 ## 2. Update The Remote
 
 From the existing local project:
 
 ```powershell
-git remote set-url origin https://github.com/AN-SWAPNIL/MIPRO_ERP.git
+git remote set-url origin https://github.com/AN-SWAPNIL/MIPROBD_ERP.git
 git remote -v
 git fetch origin
 ```
@@ -22,7 +22,7 @@ The linked prototype worktree shares this remote, so do not create another repos
 
 ## 3. Update The Connection Label
 
-Change only `repository` in `config/environments.json` to `AN-SWAPNIL/MIPRO_ERP`, preserving `repositoryId`. Commit/promote this small configuration update through `dev` and `main`. The deployment audit now verifies the immutable repository ID, not its old name, so existing connections tolerate a rename. The label is still needed if a Vercel project is reconnected later.
+`repository` in `config/environments.json` is now `AN-SWAPNIL/MIPROBD_ERP`, preserving `repositoryId`. The deployment audit verifies the immutable repository ID, not its old name, so existing connections tolerate a rename. The label is still needed if a Vercel project is reconnected later.
 
 In Vercel, check **Settings -> Git** for all three projects. Verify that they reference the renamed repository and retain their production branches (`prototype`, `dev`, `main`). If Vercel still shows the old name or Git-triggered deployment stops, reconnect the same renamed repository; do not create new projects or alter secrets. Audit without changes:
 

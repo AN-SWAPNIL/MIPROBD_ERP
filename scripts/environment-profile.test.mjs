@@ -5,7 +5,7 @@ import { environments, matchesLinkedRepository, profileForBranch, validateProfil
 
 const profile = environments.profiles.uat;
 test("repository identity survives renaming but never accepts a same-name different repository", () => {
-  assert.equal(matchesLinkedRepository({ type: "github", repoId: environments.repositoryId, repo: "MIPRO_ERP", org: "AN-SWAPNIL" }), true);
+  assert.equal(matchesLinkedRepository({ type: "github", repoId: environments.repositoryId, repo: "MIPROBD_ERP", org: "AN-SWAPNIL" }), true);
   assert.equal(matchesLinkedRepository({ type: "github", repoId: 1, repo: "Medical_Supplier_ERP", org: "AN-SWAPNIL" }), false);
   assert.equal(matchesLinkedRepository(undefined), false);
 });
@@ -20,6 +20,9 @@ test("branches select three unique projects without a prototype database", () =>
   assert.equal(profileForBranch("dev")[0], "staging"); assert.equal(profileForBranch("main")[0], "uat");
   assert.equal(profileForBranch("prototype")[1].supabaseRef, null); assert.equal(profileForBranch("feature/test"), undefined);
   assert.equal(new Set(Object.values(environments.profiles).map(p => p.projectId)).size, 3);
+  assert.equal(environments.repository, "AN-SWAPNIL/MIPROBD_ERP");
+  assert.equal(environments.profiles.prototype.project, "mipro-erp-prototype");
+  assert.equal(environments.profiles.prototype.origin, "https://mipro-erp-prototype.vercel.app");
 });
 test("matching hosted UAT profile is valid, cross-environment credentials are rejected", () => {
   assert.doesNotThrow(() => validateProfile(profile, valid, { hosted: true }));

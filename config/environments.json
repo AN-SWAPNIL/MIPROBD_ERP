@@ -1,14 +1,14 @@
 {
-  "repository": "AN-SWAPNIL/Medical_Supplier_ERP",
+  "repository": "AN-SWAPNIL/MIPROBD_ERP",
   "repositoryId": 1277933275,
   "teamId": "team_XcSqmZo5GN5zap9crIA0zEil",
   "profiles": {
     "prototype": {
       "branch": "prototype",
       "mode": "mock",
-      "project": "medical-supplier-erp",
-      "projectId": "prj_80AVQnCabtMVzLYmZxsxfqcewOlB",
-      "origin": "https://medical-supplier-erp.vercel.app",
+      "project": "mipro-erp-prototype",
+      "projectId": "prj_OYEvPfI0esGE964165Clbn7csjFQ",
+      "origin": "https://mipro-erp-prototype.vercel.app",
       "supabaseRef": null
     },
     "staging": {

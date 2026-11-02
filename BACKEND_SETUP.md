@@ -13,7 +13,7 @@ Updated: 2 November 2026. This replaces the old root `.env` setup instructions; 
 
 | Branch | Site | Supabase | Local URL |
 | --- | --- | --- | --- |
-| `prototype` | https://medical-supplier-erp.vercel.app | None; temporary mock data | localhost:5173 |
+| `prototype` | https://mipro-erp-prototype.vercel.app | None; temporary mock data | localhost:5173 |
 | `dev` | https://mipro-erp-staging.vercel.app | `hyttuapvvqqxcyhojbwq` | localhost:5178 |
 | `main` | https://mipro-erp.vercel.app | `njbecypawzsuqiteooly` | localhost:5180 |
 
