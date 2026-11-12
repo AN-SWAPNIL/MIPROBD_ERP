@@ -9,6 +9,7 @@ import { HttpError } from "./errors.js";
 import { sessionSecurity } from "./assurance.js";
 import { clearSessionCookies, refreshCookie, sessionCookie, writeSessionCookies } from "./session-cookies.js";
 import { visibleEmployee } from "./employee-visibility.js";
+import { logPasswordRejection, passwordUpdateError } from "./password-errors.js";
 
 export function createAuthRouter(ctx: Context) {
   const router = Router();
@@ -105,14 +106,16 @@ export function createAuthRouter(ctx: Context) {
     const { password } = resetSchema.parse(req.body);
     const actor = await authenticate(ctx, req, true, true);
     if (actor.purpose !== "recovery") throw new HttpError(403, "Use a verified recovery or invitation link to set a password.");
+    await rateLimit(ctx, `password-reset:${actor.user.id}`, 10);
+    if (actor.security.enrolled && actor.security.assurance !== "aal2") throw new HttpError(428, "Verify your authenticator code before saving the new password.");
     const client = ctx.publicClient();
     // Updating through the user's verified token respects provider password policy.
     const refreshToken = parse(req.headers.cookie ?? "")[refreshCookie];
     if (!refreshToken) throw new HttpError(401, "Request a new recovery link.");
-    const { error: sessionError } = await client.auth.setSession({ access_token: actor.token, refresh_token: refreshToken });
-    if (sessionError) throw new HttpError(401, "Recovery session expired.");
+    const { data: recovered, error: sessionError } = await client.auth.setSession({ access_token: actor.token, refresh_token: refreshToken });
+    if (sessionError || recovered.session?.access_token !== actor.token) throw new HttpError(401, "Recovery session expired. Request a new recovery email.");
     const { error } = await client.auth.updateUser({ password });
-    if (error) throw new HttpError(422, "The password could not be updated. Check password policy or request a new link.");
+    if (error) { logPasswordRejection("reset", error); throw passwordUpdateError(error); }
     await ctx.db.transaction(async (tx) => {
       await tx.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.employeeId, actor.user.id));
       await audit(tx, actor.user.id, "Password reset", "Employee", actor.user.id);
@@ -131,8 +134,8 @@ export function createAuthRouter(ctx: Context) {
     await client.auth.signOut({ scope: "local" });
     const authorized = ctx.publicClient(); const refreshToken = parse(req.headers.cookie ?? "")[refreshCookie];
     if (!refreshToken || (await authorized.auth.setSession({ access_token: actor.token, refresh_token: refreshToken })).error) throw new HttpError(401, "Please sign in again before changing your password.");
-    const { error: updateError } = await authorized.auth.updateUser({ password: input.password });
-    if (updateError) throw new HttpError(422, "Password does not meet the account policy.");
+    const { error: updateError } = await authorized.auth.updateUser({ password: input.password, current_password: input.currentPassword });
+    if (updateError) { logPasswordRejection("change", updateError); throw passwordUpdateError(updateError); }
     await ctx.db.transaction(async (tx) => {
       await tx.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.employeeId, actor.user.id));
       await audit(tx, actor.user.id, "Password changed", "Employee", actor.user.id);

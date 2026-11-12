@@ -7,9 +7,11 @@ import type { ImportCase, ImportCostLine, LandedCostSnapshot } from "../../src/d
 import { hasCapability, hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
 import { audit, identity, type Context } from "../foundation/context.js";
 import { assertAllowed, HttpError } from "../foundation/errors.js";
-import { createImportInput, itemInput, updateImportInput, costInput, transitionInput, reasonInput } from "./contracts.js";
+import { createImportInput, itemInput, updateImportInput, costInput, transitionInput, reasonInput, validateCommercial } from "./contracts.js";
 import { lockActor, newId, nextNumber, postingIdentity, previousPosting } from "./common.js";
 import { canonicalItem, loadImport, loadImports, lockImport, money, visibleImport } from "./import-records.js";
+import { activePaymentFields, paymentPayload } from "../../src/domains/imports/paymentPayload.js";
+const CostDecimal = Decimal.clone({ precision: 48, rounding: Decimal.ROUND_HALF_UP });
 
 function baseStatus(commercial: Pick<ImportCase, "piNumber" | "paymentMode" | "lcNumber" | "ttReference">) {
   if (commercial.piNumber?.trim() && ((commercial.paymentMode === "LC" && commercial.lcNumber?.trim()) || (commercial.paymentMode === "TT" && commercial.ttReference?.trim()))) return "LC/TT Opened" as const;
@@ -30,7 +32,7 @@ export function createImportRouter(ctx: Context) {
     res.json({ success: true, data: await read(String(req.params.id), user), message: "Import loaded" });
   });
   router.post("/imports", async (req, res) => {
-    const input = createImportInput.parse(req.body);
+    const input = createImportInput.parse(paymentPayload(req.body));
     const key = postingIdentity(req, `${identity(res).user.id}:import-create`, input);
     const id = await ctx.db.transaction(async (tx) => {
       const user = await lockActor(tx, identity(res), "import", "create");
@@ -41,9 +43,10 @@ export function createImportRouter(ctx: Context) {
       if (existing) return existing;
       const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, input.supplierId)).for("share");
       if (!supplier?.active) throw new HttpError(422, "Select an active supplier.");
-      const { items, supplierId, ...commercial } = input;
+      const { items, supplierId, ...commercialInput } = input;
+      const commercial = activePaymentFields(validateCommercial(commercialInput));
       if (!hasCapability(user, "edit_sensitive_cost")) {
-        commercial.exchangeRate = "0"; delete commercial.lcAmount; delete commercial.ttAmount;
+        commercial.exchangeRate = "0"; delete commercial.lcAmount; delete commercial.lcBankAmount; delete commercial.lcOtherAmount; delete commercial.ttAmount;
       }
       const id = newId("imp");
       const draftReference = await nextNumber(tx, "IMP", input.poDate);
@@ -56,15 +59,24 @@ export function createImportRouter(ctx: Context) {
     res.status(201).json({ success: true, data: await read(id, identity(res).user), message: "Import created" });
   });
   router.patch("/imports/:id", async (req, res) => {
-    const patch = updateImportInput.parse(req.body);
+    const patch = updateImportInput.parse(paymentPayload(req.body));
     await ctx.db.transaction(async (tx) => {
       const user = await lockActor(tx, identity(res), "import", "edit");
       const row = await lockImport(tx, String(req.params.id), true);
-      if (!hasCapability(user, "edit_sensitive_cost")) { delete patch.exchangeRate; delete patch.lcAmount; delete patch.ttAmount; }
-      const commercial = { ...row.commercial, ...patch };
+      const { supplierId, ...commercialPatch } = patch;
+      let supplierName = row.supplierName;
+      if (supplierId && supplierId !== row.supplierId) {
+        if (!["Draft", "PI Received", "LC/TT Opened"].includes(row.status)) throw new HttpError(409, "Supplier cannot be changed after production starts. Keep this case's original supplier and create another import if needed.");
+        const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, supplierId)).for("share");
+        if (!supplier?.active) throw new HttpError(422, "Select an active supplier.", [{ field: "supplierId", message: "Select an active supplier." }]);
+        supplierName = supplier.name;
+      }
+      if (!hasCapability(user, "edit_sensitive_cost")) { delete commercialPatch.exchangeRate; delete commercialPatch.lcAmount; delete commercialPatch.lcBankAmount; delete commercialPatch.lcOtherAmount; delete commercialPatch.ttAmount; }
+      const validated = validateCommercial(activePaymentFields({ ...row.commercial, ...commercialPatch }));
+      const commercial = { ...validated, rateDate: validated.rateDate ?? "" };
       if (!["Draft", "PI Received", "LC/TT Opened"].includes(row.status) && baseStatus(commercial) !== "LC/TT Opened") throw new HttpError(422, "PI and LC/TT reference cannot be removed after production starts.");
-      await tx.update(importCases).set({ commercial, status: ["Draft", "PI Received", "LC/TT Opened"].includes(row.status) ? baseStatus(commercial) : row.status, updatedAt: new Date() }).where(eq(importCases.id, row.id));
-      await audit(tx, user.id, "Import commercial details updated", "Import", row.id);
+      await tx.update(importCases).set({ commercial, supplierId: supplierId ?? row.supplierId, supplierName, status: ["Draft", "PI Received", "LC/TT Opened"].includes(row.status) ? baseStatus(commercial) : row.status, updatedAt: new Date() }).where(eq(importCases.id, row.id));
+      await audit(tx, user.id, "Import commercial details updated", "Import", row.id, supplierId && supplierId !== row.supplierId ? { previousSupplierId: row.supplierId, supplierId } : {});
     });
     res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Import updated" });
   });
@@ -107,7 +119,7 @@ export function createImportRouter(ctx: Context) {
           if (["rent", "office rent", "salary", "salaries", "office utilities", "ta/da", "ta-da", "operating expense"].some((name) => [input.name, input.category].some((value) => value.toLowerCase() === name))) throw new HttpError(422, "Operating expenses must not be included in landed cost.");
           if (/customs|duty/i.test(input.category) && input.allocationMethod !== "PRODUCT_SPECIFIC") throw new HttpError(422, "Enter final assessed customs duty per product using product-specific allocation.");
           const exchangeRate = input.currency === "BDT" ? "1" : input.exchangeRate;
-          const cost: ImportCostLine = { ...input, exchangeRate, amountBdt: money(new Decimal(input.amountForeign).mul(exchangeRate)), id: existing?.id ?? newId("cost"), enteredBy: existing?.data.enteredBy ?? user.name, createdAt: existing?.data.createdAt ?? new Date().toISOString() };
+          const cost: ImportCostLine = { ...input, exchangeRate, amountBdt: money(new CostDecimal(input.amountForeign).mul(exchangeRate)), id: existing?.id ?? newId("cost"), enteredBy: existing?.data.enteredBy ?? user.name, createdAt: existing?.data.createdAt ?? new Date().toISOString() };
           const record = await loadImport(tx, row.id);
           const preview = calculateLandedCost(row.id, record.items, [cost]);
           if (preview.validationErrors.length) throw new HttpError(422, preview.validationErrors.join(" "));

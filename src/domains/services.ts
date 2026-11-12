@@ -3,6 +3,9 @@ import type { ApiResponse, User } from "../types";
 import { authHeaders, readSession } from "../lib/auth/transport";
 import { foundationMode } from "../lib/runtime";
 import { apiRequest, ApiRequestError } from "../lib/api/client";
+import { responseIssues } from "../lib/api/validation";
+import { safeApiMessage } from "../lib/api/safeErrors";
+import { paymentPayload } from "./imports/paymentPayload";
 import { PersistentReportSchema, ReportCatalogueEntrySchema, type PersistentReportQuery } from "./reports/persistentContracts";
 import type {
   AccountTransaction,
@@ -151,14 +154,14 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
     sessionStorage.setItem(pendingKey, key);
     requestHeaders.set("Idempotency-Key", key);
   }
-  const response = await fetch(API_BASE_URL + path, { ...init, headers: requestHeaders });
+  const response = await fetch(API_BASE_URL + path, { ...init, headers: requestHeaders }).catch((error: unknown) => { if (init?.signal?.aborted) throw error; throw new ApiRequestError("Could not connect to the service. Check your connection and try again.", 0); });
   const body = (await response.json().catch(() => null)) as ApiResponse<unknown> | null;
   if (!response.ok || !body?.success) {
     if (pendingKey && response.status >= 400 && response.status < 500 && response.status !== 408) sessionStorage.removeItem(pendingKey);
-    throw new ApiRequestError(body?.message || "Request failed (" + response.status + ")", response.status);
+    throw new ApiRequestError(safeApiMessage(response.status, body?.message, response.headers.get("X-Request-Id")), response.status, response.status < 500 ? responseIssues((body as { errors?: unknown } | null)?.errors) : []);
   }
   const parsed = schema.safeParse(body.data);
-  if (!parsed.success) throw new Error("API contract validation failed for " + path + ": " + parsed.error.issues[0]?.message);
+  if (!parsed.success) throw new ApiRequestError("The service returned unexpected data. Reload and try again; contact your administrator if it continues.", 502);
   if (pendingKey) sessionStorage.removeItem(pendingKey);
   return parsed.data;
 }
@@ -175,8 +178,8 @@ export const dashboardService = {
 export const importService = {
   list: () => get<ImportCase[]>("/api/imports", z.array(ImportCaseSchema)),
   get: (id: string) => get<ImportCase>("/api/imports/" + id, ImportCaseSchema),
-  create: (payload: Partial<ImportCase>) => post<ImportCase>("/api/imports", payload, ImportCaseSchema),
-  update: (id: string, payload: Partial<ImportCase>) => patch<ImportCase>("/api/imports/" + id, payload, ImportCaseSchema),
+  create: (payload: Partial<ImportCase>) => post<ImportCase>("/api/imports", paymentPayload(payload), ImportCaseSchema),
+  update: (id: string, payload: Partial<ImportCase>) => patch<ImportCase>("/api/imports/" + id, paymentPayload(payload), ImportCaseSchema),
   transition: (id: string, status: string) => post<ImportCase>("/api/imports/" + id + "/transition", { status }, ImportCaseSchema),
   remove: (id: string) => remove("/api/imports/" + id),
   addItem: (id: string, payload: Omit<ImportItem, "id">) => post<ImportCase>("/api/imports/" + id + "/items", payload, ImportCaseSchema),

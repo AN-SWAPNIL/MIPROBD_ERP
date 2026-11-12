@@ -85,7 +85,7 @@ export default function ProfilePage() {
                   return;
                 }
                 if (foundationMode) {
-                  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) { setProfileError("Choose a PNG, JPEG or WebP image up to 2 MB."); return; }
+                  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size >= 1_000_000) { setProfileError("Choose a PNG, JPEG or WebP image smaller than 1 MB."); return; }
                   setAvatarFile(file);
                   setProfileError("");
                   return;

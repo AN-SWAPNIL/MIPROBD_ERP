@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { cashAccounts, financialPositionEntries, importCases, openingPositions, postingKeys, supplierSettlements, suppliers } from "../../database/schema.js";
+import { cashAccounts, financialPositionEntries, importCases, openingPositions, postingKeys, purchaseReceipts, supplierSettlements, suppliers } from "../../database/schema.js";
 import { audit, identity, type Context } from "../foundation/context.js";
 import { assertAllowed, HttpError } from "../foundation/errors.js";
 import { hasCapability, hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
@@ -37,6 +37,8 @@ export function createSettlementRouter(ctx: Context) {
       const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, input.supplierId)).for("update");
       if (!supplier?.active) throw new HttpError(422, "Select an active supplier.");
       if (input.entryType === "Obligation") {
+        const [purchase] = await tx.select({ id: purchaseReceipts.id }).from(purchaseReceipts).where(and(eq(purchaseReceipts.supplierId, supplier.id), sql`lower(btrim(${input.reference})) in (lower(btrim(${purchaseReceipts.reference})),lower(btrim(${purchaseReceipts.number})))`)).limit(1);
+        if (purchase) throw new HttpError(409, "This payable is already posted by its purchase receipt. Record only the supplier payment here.");
         const [opening] = await tx.select({ id: openingPositions.id }).from(openingPositions).where(and(eq(openingPositions.entityId, supplier.id), inArray(openingPositions.kind, ["Supplier Due", "Supplier Advance"]), sql`lower(btrim(${openingPositions.sourceReference}))=lower(btrim(${input.reference}))`)).limit(1);
         if (opening) throw new HttpError(409, "This supplier reference is already represented in approved opening positions. Do not post its obligation twice.");
       }
@@ -66,6 +68,7 @@ export function createSettlementRouter(ctx: Context) {
       if (!reference) throw new HttpError(404, "Supplier entry not found.");
         if (reference.supplierClaimId) throw new HttpError(409, "Approved supplier credits require a separately reviewed source correction, not a payment reversal.");
       if (reference.openingPositionId) throw new HttpError(409, "Approved opening sources cannot be reversed as ordinary payments. Use a separately reviewed opening correction.");
+      if (reference.purchaseReceiptId) throw new HttpError(409, "This obligation is linked to received stock. It cannot be reversed separately from its purchase source.");
       await tx.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.id, reference.supplierId)).for("update");
       const [row] = await tx.select().from(supplierSettlements).where(eq(supplierSettlements.id, id)).for("update");
       if (row.status !== "Posted") throw new HttpError(409, "Supplier entry is already reversed.");

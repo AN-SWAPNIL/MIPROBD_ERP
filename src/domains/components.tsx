@@ -1,6 +1,13 @@
 import clsx from "clsx";
 import { AlertCircle, ChevronDown, Inbox, LoaderCircle, X } from "lucide-react";
 import { useEffect, type ComponentType, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "../lib/api/client";
+import { ApiRequestError } from "../lib/api/client";
+import { fieldLabel, inputIssues } from "../lib/api/validation";
+import { ZodError } from "zod";
+import { safeErrorMessage } from "../lib/api/safeErrors";
 import Button from "../components/ui/Button";
 
 export const inputClass =
@@ -8,6 +15,8 @@ export const inputClass =
 export const textareaClass =
   "min-h-24 w-full resize-y rounded-md border border-blue-200 bg-[#fbfdff] px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-blue-300 focus:border-cyan-600 focus:bg-white focus:ring-2 focus:ring-cyan-100 disabled:bg-slate-100";
 export const labelClass = "mb-1 block text-xs font-bold uppercase text-blue-900";
+let openModalCount = 0;
+let bodyOverflowBeforeModal = "";
 
 export function Panel({
   title,
@@ -98,13 +107,14 @@ export function Modal({
 }) {
   useEffect(() => {
     if (!open) return;
-    const previous = document.body.style.overflow;
+    if (!openModalCount) bodyOverflowBeforeModal = document.body.style.overflow;
+    openModalCount++;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = previous; };
+    return () => { openModalCount--; if (!openModalCount) document.body.style.overflow = bodyOverflowBeforeModal; };
   }, [open]);
   if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title} onSubmit={(event) => event.stopPropagation()}>
       <button className="absolute inset-0 cursor-default" type="button" onClick={onClose} aria-label="Close dialog" />
       <div className={clsx("relative flex max-h-[94vh] w-full flex-col overflow-hidden rounded-t-md bg-white shadow-2xl sm:rounded-md", width)}>
         <div className="flex items-start justify-between gap-4 border-b border-blue-900 bg-blue-950 px-4 py-3 text-white">
@@ -119,7 +129,7 @@ export function Modal({
         <div className="overflow-y-auto p-4">{children}</div>
         {footer ? <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">{footer}</div> : null}
       </div>
-    </div>
+    </div>, document.body
   );
 }
 
@@ -130,6 +140,7 @@ export function SectionAccordion({
   icon: Icon,
   children,
   defaultOpen = true,
+  hidden = false,
   actions
 }: {
   title: string;
@@ -138,10 +149,11 @@ export function SectionAccordion({
   icon: ComponentType<{ className?: string }>;
   children: ReactNode;
   defaultOpen?: boolean;
+  hidden?: boolean;
   actions?: ReactNode;
 }) {
   return (
-    <details className="group overflow-hidden rounded-md border border-blue-200 bg-white shadow-sm" open={defaultOpen}>
+    <details hidden={hidden} className="group overflow-hidden rounded-md border border-blue-200 bg-white shadow-sm" open={defaultOpen}>
       <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 border-l-4 border-l-red-600 bg-blue-50/70 px-4 py-3">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded bg-cyan-50 text-cyan-700"><Icon className="h-4 w-4" /></span>
         <div className="min-w-[140px] flex-1">
@@ -165,14 +177,15 @@ export function LoadingBlock({ label = "Loading data" }: { label?: string }) {
   );
 }
 
-export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+export function ErrorBlock({ error, onRetry, title = "Could not load this workspace" }: { error: unknown; onRetry?: () => void; title?: string }) {
+  const issues = error instanceof ApiRequestError ? error.issues : error instanceof ZodError ? inputIssues(error.issues) : [];
   return (
-    <div className="rounded-md border border-red-200 bg-red-50 p-5 text-red-800">
+    <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-5 text-red-800">
       <div className="flex items-start gap-3">
         <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
         <div className="min-w-0 flex-1">
-          <strong className="text-sm">Could not load this workspace</strong>
-          <p className="mt-1 break-words text-sm">{error instanceof Error ? error.message : "Unexpected API error."}</p>
+          <strong className="text-sm">{title}</strong>
+          {issues.length ? <ul className="mt-2 list-inside list-disc space-y-1 break-words text-sm">{issues.map((issue, index) => <li key={index}><strong>{fieldLabel(issue.field) || "Form"}:</strong> {issue.message}</li>)}</ul> : <p className="mt-1 break-words text-sm">{safeErrorMessage(error)}</p>}
           {onRetry ? <Button className="mt-3" onClick={onRetry}>Try again</Button> : null}
         </div>
       </div>
@@ -194,8 +207,9 @@ export function EmptyState({ title, message, action }: { title: string; message:
 }
 
 export function ProductThumb({ src, name, size = "md" }: { src?: string; name: string; size?: "sm" | "md" | "lg" }) {
+  const image = useQuery({ queryKey: ["product-image", src], enabled: Boolean(src?.startsWith("/api/documents/")), staleTime: 40_000, refetchInterval: 45_000, queryFn: async () => (await apiRequest<{ url: string }>(src!)).data.url });
   const dimensions = size === "sm" ? "h-8 w-8" : size === "lg" ? "h-16 w-16" : "h-11 w-11";
-  const [imagePath, sprite] = src?.split("#") ?? [];
+  const [imagePath, sprite] = (src?.startsWith("/api/documents/") ? image.data : src)?.split("#") ?? [];
   const spritePosition: Record<string, string> = {
     dialyzer: "0% 0%",
     bloodline: "100% 0%",
@@ -211,7 +225,7 @@ export function ProductThumb({ src, name, size = "md" }: { src?: string; name: s
           role="img"
           aria-label={name}
         />
-      ) : src ? <img className="h-full w-full object-contain p-1" src={src} alt={name} /> : <span className="grid h-full w-full place-items-center text-xs font-bold text-slate-400">{name.slice(0, 2).toUpperCase()}</span>}
+      ) : imagePath ? <img className="h-full w-full object-contain p-1" src={imagePath} alt={name} /> : <span className="grid h-full w-full place-items-center text-xs font-bold text-slate-400">{name.slice(0, 2).toUpperCase()}</span>}
     </div>
   );
 }

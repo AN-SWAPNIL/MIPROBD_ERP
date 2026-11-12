@@ -10,6 +10,7 @@ import { audit, identity, toUser, type Context } from "./context.js";
 import { assertAllowed, HttpError } from "./errors.js";
 import { sourceForResource,qualityRead,qualityWrite } from "../quality/service.js";
 import { inspectBusinessFile } from "./attachment-files.js";
+import { inspectMasterImage } from "./product-images.js";
 
 export function matchesFileSignature(mime: string, bytes: Uint8Array) {
   const starts = (...values: number[]) => values.every((value, i) => bytes[i] === value);
@@ -27,7 +28,12 @@ export function createDocumentRouter(ctx: Context) {
     if (!employee) throw new HttpError(404, "Employee not found.");
     assertAllowed(actor.id === employee.id || canManageTargetUser(actor, toUser(employee)));
   }
-  async function requireDocumentAccess(actor: ReturnType<typeof identity>["user"], row: Pick<typeof documents.$inferSelect, "employeeId" | "importId" | "sensitive" | "purpose" | "expenseId" | "uploadedBy"> & { activityId?: string|null;visitId?:string|null;visitAttemptId?:string|null;qualityResourceId?:string|null }, write = false) {
+  async function requireDocumentAccess(actor: ReturnType<typeof identity>["user"], row: Pick<typeof documents.$inferSelect, "employeeId" | "importId" | "sensitive" | "purpose" | "expenseId" | "uploadedBy"> & { productId?: string|null;activityId?: string|null;visitId?:string|null;visitAttemptId?:string|null;qualityResourceId?:string|null }, write = false) {
+    if (row.purpose === "product-image") {
+      if (write) assertAllowed(row.uploadedBy === actor.id && ["create", "edit"].some((action) => hasEffectivePermission(actor, "products", action as "create" | "edit")));
+      else assertAllowed((Boolean(row.productId) || row.uploadedBy === actor.id) && ["products", "import", "inventory", "sales"].some((area) => hasEffectivePermission(actor, area as "products" | "import" | "inventory" | "sales")));
+      return;
+    }
     if(row.purpose==="quality-evidence"){if(!row.qualityResourceId)throw new HttpError(404,"Inspection source not found.");await ctx.db.transaction(async tx=>{const s=await sourceForResource(tx,row.qualityResourceId!);if(write)qualityWrite(actor,s);else qualityRead(actor,s);assertAllowed(!row.sensitive||hasCapability(actor,"view_sensitive_cost"));});return;}
     if(row.purpose==="field-visit-evidence"){
       assertAllowed(hasEffectivePermission(actor,"marketing")&&(!write||hasEffectivePermission(actor,"marketing","create")));
@@ -61,11 +67,11 @@ export function createDocumentRouter(ctx: Context) {
   router.post("/uploads", async (req, res) => {
     const input = uploadSchema.parse(req.body);
     const actor = identity(res).user;
-    const employeeId = ["import-document", "expense-receipt", "marketing-evidence", "field-visit-evidence"].includes(input.purpose) ? actor.id : input.employeeId!;
+    const employeeId = ["import-document", "expense-receipt", "marketing-evidence", "field-visit-evidence", "product-image"].includes(input.purpose) ? actor.id : input.employeeId!;
     const sensitive = input.purpose === "import-document" ? !["Packing List", "Bill of Lading", "COA", "CE Certificate", "ISO Certificate"].includes(input.documentType!) || input.sensitive === true : true;
     await requireDocumentAccess(actor, { employeeId, importId: input.importId ?? null, sensitive, purpose: input.purpose, expenseId: null, uploadedBy: actor.id,visitAttemptId:input.visitAttemptId }, true);
     const id = randomUUID();
-    const objectPath = input.purpose === "field-visit-evidence" ? `visits/pending/${actor.id}/${id}` : input.purpose === "marketing-evidence" ? `marketing/pending/${actor.id}/${id}` : input.purpose === "expense-receipt" ? `expenses/pending/${actor.id}/${id}` : input.importId ? `imports/${input.importId}/${id}` : `employees/${employeeId}/${id}`;
+    const objectPath = input.purpose === "product-image" ? `products/${actor.id}/${id}` : input.purpose === "field-visit-evidence" ? `visits/pending/${actor.id}/${id}` : input.purpose === "marketing-evidence" ? `marketing/pending/${actor.id}/${id}` : input.purpose === "expense-receipt" ? `expenses/pending/${actor.id}/${id}` : input.importId ? `imports/${input.importId}/${id}` : `employees/${employeeId}/${id}`;
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
     await ctx.db.transaction(async (tx) => {
       if(input.purpose==="field-visit-evidence"){
@@ -97,7 +103,7 @@ export function createDocumentRouter(ctx: Context) {
       throw new HttpError(422, "Uploaded file size, type or signature does not match the authorization.");
     }
     const bytes=Buffer.from(await file.arrayBuffer()),{sha256}=inspectBusinessFile(bytes,row.mimeType);
-    const imageInfo=row.purpose==="field-visit-evidence"?await validateVisitImage(bytes,row.mimeType):undefined;
+    const imageInfo=row.purpose==="field-visit-evidence"?await validateVisitImage(bytes,row.mimeType):["product-image","employee-avatar"].includes(row.purpose)?await inspectMasterImage(bytes,row.mimeType):undefined;
     await ctx.db.transaction(async (tx) => {
       if(row.purpose==="field-visit-evidence"){const [a]=await tx.select().from(fieldVisitAttempts).where(eq(fieldVisitAttempts.id,row.visitAttemptId!)).for("update");if(!a||a.consumedAt||a.expiresAt<new Date())throw new HttpError(409,"Capture attempt expired during upload.");}
       const [attached] = await tx.update(documents).set({ status: "Attached", attachedAt: new Date(),sha256,...(imageInfo?{imageInfo}:{}) })

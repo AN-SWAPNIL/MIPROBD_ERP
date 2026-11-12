@@ -136,7 +136,8 @@ export const documents = erp.table("documents", {
   id: uuid("id").primaryKey().defaultRandom(),
   employeeId: text("employee_id").notNull().references(() => employees.id),
   uploadedBy: text("uploaded_by").notNull().references(() => employees.id),
-  purpose: text("purpose").$type<"employee-avatar" | "employee-evidence" | "import-document" | "expense-receipt" | "marketing-evidence" | "field-visit-evidence" | "quality-evidence">().notNull(),
+  purpose: text("purpose").$type<"employee-avatar" | "employee-evidence" | "import-document" | "expense-receipt" | "marketing-evidence" | "field-visit-evidence" | "quality-evidence" | "product-image">().notNull(),
+  productId: text("product_id").references((): AnyPgColumn => products.id),
   importId: text("import_id").references(() => importCases.id),
   expenseId: text("expense_id").unique().references((): AnyPgColumn => expenses.id),
   activityId: text("activity_id").references((): AnyPgColumn => marketingActivities.id),
@@ -161,6 +162,14 @@ export const rateLimits = erp.table("rate_limits", {
   count: integer("count").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull()
 });
+
+export const masterOptions = erp.table("master_options", {
+  id: text("id").primaryKey(), kind: text("kind").notNull(), value: text("value").notNull(),
+  createdBy: text("created_by").notNull().references(() => employees.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+}, (t) => [uniqueIndex("master_option_unique").on(t.kind, sql`lower(btrim(${t.value}))`),
+  check("master_option_kind", sql`${t.kind} in ('unit','currency','product-family','country','container-type','document-type','import-cost-category')`),
+  check("master_option_value", sql`length(btrim(${t.value})) between 1 and 80`)]).enableRLS();
 
 export const printConfigurations = erp.table("print_configurations", {
   id: text("id").primaryKey(),
@@ -189,7 +198,7 @@ export const documentNumbers = erp.table("document_numbers", {
   key: text("key").primaryKey(), value: integer("value").notNull()
 }).enableRLS();
 
-export type CommercialFields = Pick<ImportCase, "poNumber" | "poDate" | "piNumber" | "piDate" | "paymentMode" | "lcNumber" | "lcAmount" | "lcOpenDate" | "lcExpiryDate" | "ttReference" | "ttAmount" | "ttDate" | "bank" | "currency" | "exchangeRate" | "rateDate" | "rateSource" | "expectedShipmentDate" | "commercialInvoiceNumber" | "commercialInvoiceDate" | "productionStatus" | "productionFollowUpNote" | "blNumber" | "containerNumber" | "containerType" | "vesselName" | "etd" | "eta" | "notes">;
+export type CommercialFields = Pick<ImportCase, "poNumber" | "poDate" | "piNumber" | "piDate" | "paymentMode" | "lcNumber" | "lcAmount" | "lcBankAmount" | "lcOtherAmount" | "lcOpenDate" | "lcExpiryDate" | "ttReference" | "ttAmount" | "ttDate" | "bank" | "currency" | "exchangeRate" | "rateDate" | "rateSource" | "expectedShipmentDate" | "commercialInvoiceNumber" | "commercialInvoiceDate" | "productionStatus" | "productionFollowUpNote" | "blNumber" | "containerNumber" | "containerType" | "vesselName" | "etd" | "eta" | "notes">;
 export const importCases = erp.table("import_cases", {
   id: text("id").primaryKey(), draftReference: text("draft_reference").notNull().unique(),
   supplierId: text("supplier_id").notNull().references(() => suppliers.id), supplierName: text("supplier_name").notNull(),
@@ -246,7 +255,19 @@ export const receiptLines = erp.table("receipt_lines", {
   inventoryValueBdt: numeric("inventory_value_bdt", { precision: 24, scale: 2 }).notNull()
 }, (t) => [index("receipt_line_item_idx").on(t.importItemId), check("receipt_quantity", sql`${t.quantityReceived} >= 0 and ${t.quantityRejected} >= 0 and ${t.quantityReceived} + ${t.quantityRejected} > 0`)]).enableRLS();
 
+export const purchaseReceipts = erp.table("purchase_receipts", {
+  id: text("id").primaryKey(), number: text("number").notNull().unique(), supplierId: text("supplier_id").notNull().references(() => suppliers.id), supplierName: text("supplier_name").notNull(),
+  reference: text("reference").notNull(), receivedDate: date("received_date").notNull(), currency: text("currency").notNull(), exchangeRate: numeric("exchange_rate", { precision: 18, scale: 6 }).notNull(),
+  totalBdt: numeric("total_bdt", { precision: 24, scale: 2 }).notNull(), notes: text("notes").notNull().default(""),
+  createdBy: text("created_by").notNull().references(() => employees.id), createdByName: text("created_by_name").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+}, (t) => [uniqueIndex("purchase_supplier_reference_unique").on(t.supplierId, sql`lower(btrim(${t.reference}))`), check("purchase_header_values", sql`${t.totalBdt}>0 and ${t.exchangeRate}>0 and ${t.currency} ~ '^[A-Z]{3}$'`)]).enableRLS();
+export const purchaseLines = erp.table("purchase_lines", {
+  id: text("id").primaryKey(), receiptId: text("receipt_id").notNull().references(() => purchaseReceipts.id), productId: text("product_id").notNull().references(() => products.id),
+  quantity: numeric("quantity", { precision: 18, scale: 4 }).notNull(), unitPrice: numeric("unit_price", { precision: 18, scale: 6 }).notNull(), valueBdt: numeric("value_bdt", { precision: 24, scale: 2 }).notNull()
+}, (t) => [index("purchase_line_receipt_idx").on(t.receiptId), check("purchase_line_values", sql`${t.quantity}>0 and ${t.unitPrice}>0 and ${t.valueBdt}>0`)]).enableRLS();
+
 export const stockBatches = erp.table("stock_batches", {
+  purchaseLineId: text("purchase_line_id").unique().references(() => purchaseLines.id),
   replacementReceiptId: text("replacement_receipt_id").unique().references((): AnyPgColumn => supplierReplacementReceipts.id),
   returnLineId: text("return_line_id").unique().references((): AnyPgColumn => customerReturnLines.id),
   id: text("id").primaryKey(), productId: text("product_id").notNull().references(() => products.id), receiptLineId: text("receipt_line_id").unique().references(() => receiptLines.id),
@@ -260,7 +281,7 @@ export const stockBatches = erp.table("stock_batches", {
   landedCostPerUnit: numeric("landed_cost_per_unit", { precision: 28, scale: 10 }).notNull(),
   receivedValueBdt: numeric("received_value_bdt", { precision: 24, scale: 2 }).notNull(), availableValueBdt: numeric("available_value_bdt", { precision: 24, scale: 2 }).notNull(),
   warehouse: text("warehouse").notNull(), location: text("location").notNull()
-}, (t) => [check("batch_source", sql`num_nonnulls(${t.openingPositionId},${t.receiptLineId},${t.correctionLineId},${t.returnLineId},${t.replacementReceiptId})=1 and ((${t.receiptLineId} is not null and ${t.sourceImportId} is not null) or (${t.receiptLineId} is null and ${t.sourceImportId} is null))`),
+}, (t) => [check("batch_source", sql`num_nonnulls(${t.openingPositionId},${t.receiptLineId},${t.correctionLineId},${t.returnLineId},${t.replacementReceiptId},${t.purchaseLineId})=1 and ((${t.receiptLineId} is not null and ${t.sourceImportId} is not null) or (${t.receiptLineId} is null and ${t.sourceImportId} is null))`),
   check("batch_condition", sql`${t.condition} in ('Saleable','Quarantine','Damaged','Expired')`),
   uniqueIndex("batch_number_lower_unique").on(sql`lower(${t.batchNumber})`), index("batch_fifo_idx").on(t.productId, t.receivedDate, t.id), check("batch_integrity", sql`${t.quantityReceived} > 0 and ${t.quantityAvailable} >= 0 and ${t.quantityAvailable} <= ${t.quantityReceived} and ${t.availableValueBdt} >= 0 and ${t.expiryDate} > ${t.manufacturingDate}`)]).enableRLS();
 
@@ -424,6 +445,7 @@ export const expenses = erp.table("expenses", {
 }, (t) => [index("expense_date_idx").on(t.date, t.id), check("expense_amount", sql`${t.amount} > 0 and ((${t.subtype} = 'General' and ${t.taAmount} is null and ${t.daAmount} is null) or (${t.subtype} = 'TA/DA' and ${t.expenseFor} = 'Employee' and ${t.taAmount} is not null and ${t.daAmount} is not null and ${t.taAmount} >= 0 and ${t.daAmount} >= 0 and ${t.amount} = ${t.taAmount} + ${t.daAmount}))`), check("expense_employee", sql`(${t.expenseFor} = 'Employee' and ${t.employeeId} is not null) or (${t.expenseFor} in ('Office','Warehouse','Company / General') and ${t.employeeId} is null)`), check("expense_status", sql`${t.status} in ('Posted','Reversed')`)]).enableRLS();
 
 export const supplierSettlements = erp.table("supplier_settlements", {
+  purchaseReceiptId: text("purchase_receipt_id").unique().references(() => purchaseReceipts.id),
   supplierClaimId:text("supplier_claim_id").unique().references(():AnyPgColumn=>supplierClaims.id),
   openingPositionId: text("opening_position_id").unique().references(() => openingPositions.id),
   id: text("id").primaryKey(), date: date("date").notNull(), supplierId: text("supplier_id").notNull().references(() => suppliers.id), supplierName: text("supplier_name").notNull(),

@@ -12,6 +12,7 @@ import { itemInput } from "./contracts.js";
 import type { z } from "zod";
 
 export const money = (value: Decimal.Value) => new Decimal(value).toFixed(2);
+const CostDecimal = Decimal.clone({ precision: 48, rounding: Decimal.ROUND_HALF_UP });
 export async function loadImports(tx: Transaction, id?: string): Promise<ImportCase[]> {
   const records = await tx.select().from(importCases).where(id ? eq(importCases.id, id) : undefined).orderBy(importCases.createdAt, importCases.id);
   if (!records.length) return [];
@@ -42,7 +43,7 @@ export async function loadImport(tx: Transaction, id: string) {
 }
 export function visibleImport(record: ImportCase, user: User): ImportCase {
   if (hasCapability(user, "view_sensitive_cost")) return record;
-  return { ...record, lcAmount: undefined, ttAmount: undefined, exchangeRate: "0", costs: [], snapshot: undefined, snapshotHistory: [], documents: record.documents.filter((document) => !document.sensitive), items: record.items.map((item) => ({ ...item, fobUnitForeign: "0", exchangeRate: "0", fobTotalBdt: "0" })) };
+  return { ...record, lcAmount: undefined, lcBankAmount: undefined, lcOtherAmount: undefined, ttAmount: undefined, exchangeRate: "0", costs: [], snapshot: undefined, snapshotHistory: [], documents: record.documents.filter((document) => !document.sensitive), items: record.items.map((item) => ({ ...item, fobUnitForeign: "0", exchangeRate: "0", fobTotalBdt: "0" })) };
 }
 export async function lockImport(tx: Transaction, id: string, editable = false) {
   const [row] = await tx.select().from(importCases).where(eq(importCases.id, id)).for("update");
@@ -57,8 +58,8 @@ export async function canonicalItem(tx: Transaction, input: z.infer<typeof itemI
   const sameProduct = old?.productId === input.productId;
   const fobUnitForeign = canEditCost ? input.fobUnitForeign : sameProduct ? old!.fobUnitForeign : "0";
   const exchangeRate = canEditCost ? input.currency === "BDT" ? "1" : input.exchangeRate : sameProduct ? old!.exchangeRate : "0";
-  const fobTotalBdt = money(new Decimal(input.quantity).mul(fobUnitForeign).mul(exchangeRate));
-  const totalCbm = input.cbmMode === "MANUAL" ? input.totalCbm : new Decimal(input.cbmPerCarton).mul(input.cartonCount).toFixed(8);
+  const fobTotalBdt = money(new CostDecimal(input.quantity).mul(fobUnitForeign).mul(exchangeRate));
+  const totalCbm = input.cbmMode === "MANUAL" ? input.totalCbm : new CostDecimal(input.cbmPerCarton).mul(input.cartonCount).toFixed(8);
   if (new Decimal(fobTotalBdt).gte("1e22") || new Decimal(totalCbm).gte("1e10")) throw new HttpError(422, "Derived item value exceeds supported storage precision.");
   const currency = canEditCost ? input.currency : sameProduct ? old!.currency : "USD";
   return { ...input, currency, id: old?.id ?? newId("itm"), productCode: product.code, productName: product.name, unit: product.unit, hsCode: input.hsCode ?? product.hsCode, fobUnitForeign, exchangeRate, fobTotalBdt, totalCbm };

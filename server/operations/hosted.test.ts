@@ -70,7 +70,7 @@ test("hosted imports: persisted costing, role boundaries, immutable snapshots an
     assert.equal((await call("/imports")).status, 401);
     supplierId = (await expect("/suppliers", admin, { name: `DEV TEST Supplier ${suffix}`, country: "China" }, 201)).id;
     for (const variant of ["A", "B"]) {
-      const product = await expect("/products", admin, { code: `TEST-${variant}-${suffix}`, name: `DEV TEST Dialyzer ${variant}`, family: "Dialyzer", variant, unit: "pcs", imageUrl: "/mipro-logo.png", standardSalePrice: "1000" }, 201);
+      const product = await expect("/products", admin, { code: `TEST-${variant}-${suffix}`, name: `DEV TEST Dialyzer ${variant}`, family: "Dialyzer", variant, unit: "pcs", standardSalePrice: "1000" }, 201);
       productIds.push(product.id);
     }
     assert.equal((await call("/products", warehouse, { code: "forbidden", name: "Forbidden", family: "Test", variant: "A", unit: "pcs" })).status, 403);

@@ -1,6 +1,48 @@
 # MIPRO UAT And Production Handover
 
-Updated: 1 November 2026.
+Updated: 13 November 2026.
+
+## Form And Inventory Update
+
+The target branch is `dev`. This release requires additive migration `0070_flexible_masters_and_purchases.sql` before running the new API against an existing database. It preserves existing records and adds private product images, reusable dropdown options and purchase receipts.
+
+The owner resumed and restarted `mipro-erp-dev`, resolving the shared-pooler tenant error. The development database was backed up, migration `0070` applied and the restricted runtime grants verified: **71 migrations and 93 private tables**. Existing records were preserved. UAT was not migrated or changed. To repeat development verification on `dev`:
+
+```powershell
+npm run db:migrate -- --apply
+npm run backend:runtime-database -- --apply
+node --env-file=artifacts/private/staging.env --env-file=artifacts/private/runtime-database.env --import tsx --input-type=module -e "process.env.RUN_HOSTED_FLEXIBILITY_TESTS='true'; await import('./server/operations/flexibility.hosted.test.ts')"
+npm run smoke:flexibility
+```
+
+The migration and restricted-role scripts back up the selected database first. The hosted test is explicitly restricted to development and creates synthetic test records, not client/UAT data. Add `process.env.RUN_LC_BROWSER_TESTS='true';` before the import to exercise real desktop/mobile LC save/reload and private product images. The separate browser smoke test intercepts APIs and does not change real records. Restart the local API after migration. No new environment variables are needed. Apply and verify the same migration/role grants against the separately selected UAT environment before deploying the matching code there.
+
+Verified against development: LC/TT/Pending payloads and mode changes, private import/product uploads, purchase stock/payable reconciliation, FIFO, protected costs, duplicate prevention and atomic rollback. The existing import-to-receipt suite and all **80 available SQL reports** also passed. Browser checks cover desktop and 390px mobile.
+
+- Import stages: PO/Draft, PI & Products, LC/TT, Production, Shipment, Port & Documents, Costs & Allocation, Landed Cost, Receiving, Activity & Closure. Browsing a stage does not advance its business status.
+- Supplier/product/customer/account pickers offer in-place creation only with the relevant permission. Expense categories, cost presets, units, product families, countries, currencies, container types, document types and cost categories are editable where appropriate. Roles, payment/account classifications, statuses, FIFO batches and allocation algorithms remain controlled choices, not arbitrary new options.
+- Product/profile photos use file upload, JPG/PNG/WebP, strictly below 1,000,000 bytes. Files are private; images are decoded/validated before attachment. No pasted product-image URL is required.
+- **Inventory > Add Inventory** posts a purchase receipt with cost and batch traceability. It creates FIFO stock, movements and the matching supplier payable together. Record actual supplier payments under Accounts; the receipt itself does not move cash. The new Purchase Receipts report uses these same saved records.
+- Delegated inventory purchasers need Inventory posting, sensitive-cost editing and supplier-reference access (Supplier or Import view). Supplier creation/editing remains separately controlled. Ordinary warehouse users cannot post a purchase without cost-entry authority.
+- LC entry keeps **Bank amount** and **Other amount** separately, in the chosen currency. The API calculates their total; neither amount creates a cash payment or adds an extra landed cost. Older LC totals remain unchanged until their actual breakdown is entered.
+- Editing a draft/pre-production import now selects the actual supplier master, including in-place creation. The supplier identity and name snapshot change together with an audit entry. Supplier changes are blocked after production starts and finalized records remain protected.
+- Refund, salary and advance/loan account pickers also support authorized in-place account creation. Collection account creation uses the selected payment method's required account type. Chart accounts can be created inside journal/mapping pickers only with ledger-management authority; an approved mapping still cannot be rewritten.
+- Changing currency clears the unsaved exchange rate instead of carrying a different currency's rate forward. BDT uses 1. Invalid or scientific-notation numeric inputs produce validation errors rather than crashes; quantities and manual allocations retain exact decimal checks.
+- Required inputs are marked red with an asterisk. Validation identifies fields and numbered line items. Technical response dumps, SQL/provider errors, private URLs and credentials are not shown in error panels/toasts; service failures provide a request reference for support. The server logs bounded diagnostic codes, not submitted passwords, tokens or raw database errors.
+
+The final local regression suite passes **193 tests**, with 30 additional hosted suites skipped unless explicitly enabled. The expanded desktop/390px smoke covers nested creation, payment-type filtering, safe error display, import documents, currency changes and inventory purchases. Separate hosted checks use clearly labelled development-only records, retaining immutable audit/history and removing their temporary Auth identities.
+
+## Password Recovery
+
+An emailed recovery link verifies the email but does not bypass an already enrolled authenticator. The reset screen now requests its six-digit code before saving a new password, including for Super Admin. A new privileged account without an enrolled authenticator sets its password first and completes required MFA after sign-in. Recovery cannot open ERP records, enroll a replacement factor or remove MFA.
+
+Use a new, unique password of 12-128 characters. Reusing the current password, weak passwords, expired sessions and required authenticator verification have distinct messages. A rejected password can be retried within the same valid recovery session. Success revokes the account's ERP sessions, clears the old browser login and returns to Sign In with confirmation. Provider logs contain only the operation, error code and status, never passwords, links or tokens. If the authenticator is lost, use an authorized account-recovery procedure; requesting more links will not remove MFA.
+
+Development-only verification (temporary identities, no email delivery):
+
+```powershell
+node --env-file=artifacts/private/staging.env --env-file=artifacts/private/runtime-database.env --import tsx --input-type=module -e "process.env.RUN_HOSTED_RECOVERY_TESTS='true'; process.env.RUN_RECOVERY_BROWSER_TESTS='true'; await import('./server/foundation/password-recovery.hosted.test.ts')"
+```
 
 ## Branch Selection
 

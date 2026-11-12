@@ -8,6 +8,7 @@ import { hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
 import { businessDate } from "../../lib/date";
 import { ErrorBlock, LoadingBlock, Modal, Panel, TableFrame, inputClass, labelClass } from "../components";
 import DecisionDialog from "../controls/DecisionDialog";
+import ChartAccountSelect from "./ChartAccountSelect";
 import { controlRequest } from "../controls/client";
 import { ledgerAccountSchema, ledgerCashSchema, ledgerConfigurationInput, ledgerConfigurationSchema, ledgerMappingRoles, ledgerRoleKind, type LedgerConfigurationData } from "./contracts";
 type Configuration = z.infer<typeof ledgerConfigurationSchema>;
@@ -30,7 +31,7 @@ function MappingForm({ chart, cash, previous, busy, error, save }: { chart: z.in
   const [invalid, setInvalid] = useState(""); const included = cash.filter((c) => c.active || previous?.cashMappings.some((m) => m.cashAccountId === c.id));
   const select = (name: string, label: string, initial?: string, locked = false) => {
     const role = ledgerMappingRoles.find((r) => r === name); const kind = role ? ledgerRoleKind(role) : "Asset";
-    return <label key={name}><span className={labelClass}>{label} ({kind})</span><select className={inputClass} name={name} defaultValue={initial ?? ""} required disabled={locked}><option value="">Select chart account</option>{chart.filter((a) => a.active && a.kind === kind || a.id === initial).map((a) => <option key={a.id} value={a.id}>{a.code} | {a.name}</option>)}</select>{locked ? <input name={name} type="hidden" value={initial} /> : null}</label>;
+    return <label key={name}><span className={labelClass}>{label} ({kind})</span><ChartAccountSelect chart={chart} name={name} label={`${label} chart account`} defaultValue={initial} kind={kind} disabled={locked || busy} />{locked ? <input name={name} type="hidden" value={initial} /> : null}</label>;
   };
   return <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); const parsed = ledgerConfigurationInput.safeParse({ effectiveFrom: f.get("date"), proofReference: f.get("proof"), mappings: ledgerMappingRoles.map((role) => ({ role, accountId: f.get(role) })), cashMappings: included.map((c) => ({ cashAccountId: c.id, accountId: f.get(`cash-${c.id}`) })) }); if (!parsed.success) { setInvalid(parsed.error.issues[0].message); return; } setInvalid(""); save(parsed.data); }}>
     <div className="grid gap-3 sm:grid-cols-2"><label><span className={labelClass}>Approved cutover date</span><input className={inputClass} type="date" name="date" required defaultValue={previous?.effectiveFrom ?? businessDate()} max={businessDate()} readOnly={Boolean(previous)} /></label><label><span className={labelClass}>Evidence reference</span><input className={inputClass} name="proof" required minLength={3} maxLength={200} /></label></div>

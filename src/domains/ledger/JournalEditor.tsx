@@ -7,6 +7,7 @@ import { businessDate } from "../../lib/date";
 import { formatMoney } from "../../utils/precise";
 import { ErrorBlock, TableFrame, inputClass, labelClass, textareaClass } from "../components";
 import { ledgerAccountSchema, ledgerJournalInput, type LedgerJournalDto } from "./contracts";
+import ChartAccountSelect from "./ChartAccountSelect";
 
 type Values = z.infer<typeof ledgerJournalInput>;
 const D = Decimal.clone({ precision: 48 });
@@ -32,7 +33,7 @@ export default function JournalEditor({ chart, initial, busy, error, save }: { c
     </div>
     <label><span className={labelClass}>Description</span><textarea className={textareaClass} name="description" required minLength={5} maxLength={1000} defaultValue={initial?.description} /></label>
     <TableFrame><table className="w-full min-w-[700px] text-left text-sm"><thead className="bg-blue-50 text-blue-950"><tr><th className="p-2">Chart account</th><th className="p-2">Debit (BDT)</th><th className="p-2">Credit (BDT)</th><th className="p-2">Note</th><th className="p-2" aria-label="Remove line" /></tr></thead><tbody>{lines.map((line, i) => <tr key={line.key}>
-      <td className="min-w-52 p-2"><select aria-label={`Account line ${i + 1}`} className={inputClass} value={line.accountId} required onChange={(e) => update(line.key, "accountId", e.target.value)}><option value="">Select account</option>{chart.filter((a) => a.active).map((a) => <option value={a.id} key={a.id}>{a.code} | {a.name}</option>)}</select></td>
+      <td className="min-w-52 p-2"><ChartAccountSelect chart={chart} label={`Account line ${i + 1}`} value={line.accountId} disabled={busy} onChange={(id) => update(line.key, "accountId", id)} /></td>
       {(["debit", "credit"] as const).map((field) => <td className="min-w-32 p-2" key={field}><input className={inputClass} aria-label={`${field} line ${i + 1}`} required inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" value={line[field]} onChange={(e) => update(line.key, field, e.target.value)} /></td>)}
       <td className="p-2"><input className={inputClass} aria-label={`Note line ${i + 1}`} maxLength={300} value={line.note} onChange={(e) => update(line.key, "note", e.target.value)} /></td>
       <td className="p-2"><Button title="Remove line" aria-label={`Remove line ${i + 1}`} icon={<Trash2 className="h-4 w-4" />} disabled={lines.length <= 2 || busy} onClick={() => setLines(lines.filter((l) => l.key !== line.key))} /></td>

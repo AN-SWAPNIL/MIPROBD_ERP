@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+@media screen {
+  label:has(:is(input, select, textarea)[required]:not(:disabled)) > span:first-child,
+  label:has(+ :is(input, select, textarea)[required]:not(:disabled)),
+  :is(label, div):has(> [data-required="true"]) > span:first-child {
+    color: #b91c1c;
+  }
+  label:has(:is(input, select, textarea)[required]:not(:disabled)) > span:first-child::after,
+  :is(label, div):has(> [data-required="true"]) > span:first-child::after {
+    content: " *";
+    color: #b91c1c;
+  }
+  :is(input, select, textarea)[aria-invalid="true"] { border-color: #dc2626; }
+}
+
 :root {
   color: #0f172a;
   background: #f1f5f9;

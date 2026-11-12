@@ -13,6 +13,10 @@ Inspection attachments do **not** change quantity, landed cost, credit, loss or 
 
 ## Import And Landed Cost
 
+`LC total = bank amount + other amount`, in the selected LC currency, using exact decimals and two decimal places. This is a declared breakdown, not a cash posting or an extra product cost. Both parts remain separate in the saved import; the API derives the total. Old totals with no recorded split are retained without assuming all of the money came through a bank.
+
+Currency changes clear the unsaved exchange-rate input. The operator enters the new captured rate; the ERP does not guess or fetch a rate. BDT is fixed at 1. Quantities use the product's recorded unit; no box-to-piece conversion is assumed, and changing the unit of an already-used product is blocked.
+
 ```text
 FOB value in BDT = Quantity * FOB/unit * captured exchange rate
 Cost line in BDT  = Foreign amount * captured exchange rate
@@ -39,6 +43,10 @@ The screen displays unit cost at 2 decimals; finalized snapshots also retain a 1
 Customs duty is not calculated by the ERP. The user enters the final assessed amount per product, and that amount is included as a product-specific landed cost.
 
 ## Inventory And FIFO
+
+### Purchase Receipts
+
+`Purchase line value (BDT) = round(quantity * supplier unit price * captured exchange rate, 2)`. BDT uses rate `1`. Sum the saved line values for the receipt total and supplier payable. The stored unit cost is `saved line value / quantity` at 10 decimals; later stock issues consume the saved batch value, not its two-decimal display. A receipt adds stock and a supplier obligation atomically. It does not move cash; Accounts records the actual supplier payment separately. Imports and opening balances are separate sources. Quantities use the product's canonical unit, with no implicit pack/box conversion. Once a product is used, its unit cannot be changed to reinterpret existing quantities; create a new variant instead.
 
 ### Opening Review Preview (Update 13)
 
