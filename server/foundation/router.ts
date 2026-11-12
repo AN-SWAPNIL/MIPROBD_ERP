@@ -1,12 +1,13 @@
 import { Router, type ErrorRequestHandler } from "express";
 import { randomUUID } from "node:crypto";
-import { ZodError } from "zod";
+import { errorResponse } from "./error-response.js";
 import { createContext, authenticate, type Context } from "./context.js";
 import { createAuthRouter } from "./auth.js";
 import { createEmployeeRouter } from "./employees.js";
 import { createDocumentRouter } from "./documents.js";
 import { HttpError } from "./errors.js";
 import { createMasterRouter } from "../operations/masters.js";
+import { createPurchaseRouter } from "../operations/purchases.js";
 import { createImportRouter } from "../operations/imports.js";
 import { createInventoryRouter } from "../operations/inventory.js";
 import { createTradingRouter } from "../trading/router.js";
@@ -89,6 +90,7 @@ export function createFoundationRouter(providedContext?: Context) {
   router.use(createMasterRouter(ctx));
   router.use(createImportRouter(ctx));
   router.use(createInventoryRouter(ctx));
+  router.use(createPurchaseRouter(ctx));
   router.use(createStockHoldRouter(ctx));
   router.use(createStockControlRouter(ctx));
   router.use(createReturnRouter(ctx));
@@ -111,16 +113,9 @@ export function createFoundationRouter(providedContext?: Context) {
   router.use((_req, _res, next) => next(new HttpError(503, "This workflow has not been migrated to the persistent backend. The original prototype remains separate.")));
   const handler: ErrorRequestHandler = (error, _req, res, _next) => {
     void _next;
-    if (error instanceof ZodError) return res.status(422).json({ success: false, data: null, message: "Invalid request", errors: error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message })) });
-    if (error instanceof HttpError) return res.status(error.status).json({ success: false, data: null, message: error.message });
-    const cause = error?.cause ?? error;
-    if (cause?.code === "23505") return res.status(409).json({ success: false, data: null, message: "A record with this identifier already exists." });
-    if (cause?.code === "22P02") return res.status(422).json({ success: false, data: null, message: "Invalid record identifier." });
-    if (["22003", "23514"].includes(cause?.code)) return res.status(422).json({ success: false, data: null, message: "Value exceeds supported precision or violates a data-integrity rule." });
-    if (cause?.code === "23503") return res.status(409).json({ success: false, data: null, message: "This record is linked to protected history or refers to an unavailable record." });
-    const fault = /timeout|timed out/i.test(String(cause?.message ?? "")) ? "DEPENDENCY_TIMEOUT" : /connection|socket/i.test(String(cause?.message ?? "")) ? "DEPENDENCY_CONNECTION" : "INTERNAL";
-    console.error("Backend request failed", { requestId: res.get("X-Request-Id"), code: typeof cause?.code === "string" && /^[A-Z0-9_]+$/.test(cause.code) ? cause.code : fault, errorType: /^[A-Za-z]+$/.test(cause?.name ?? "") ? cause.name : "Error" });
-    return res.status(fault === "INTERNAL" ? 500 : 503).json({ success: false, data: null, message: fault === "INTERNAL" ? "Request could not be completed. Reference the request ID when reporting this error." : "A backend dependency is temporarily unavailable. Please retry; quote the request ID if it continues." });
+    const failure = errorResponse(error, res.get("X-Request-Id"));
+    if (failure.diagnostic) console.error("Backend request failed", { requestId: res.get("X-Request-Id"), ...failure.diagnostic });
+    return res.status(failure.status).json(failure.body);
   };
   router.use(handler);
   return router;

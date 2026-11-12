@@ -79,6 +79,7 @@ const reports: ReportDefinition[] = [
   table("landed-cost-batch-history", "Landed Cost History by Batch", "suppliers", "Received batches and inherited landed unit cost.", "import", ["product"], ["history"], "view_sensitive_cost"),
 
   table("product-list", "Product List", "inventory", "Product code, family, current stock, batches and nearest expiry.", "inventory", ["product", "family", "status"], ["master", "sku"]),
+  table("purchase-receipts", "Purchase Receipts", "inventory", "Received purchases, supplier references, products and saved stock value.", "inventory", ["supplier", "product", "family"], ["purchase", "receipt", "supplier"]),
   table("stock-summary", "Stock Summary", "inventory", "Consolidated available stock by canonical product.", "inventory", ["product", "family"], ["balance"]),
   table("current-stock", "Current Batch Stock", "inventory", "Available quantity by product lot and batch.", "inventory", ["product", "status"], ["batch"]),
   table("item-details", "Product Details", "inventory", "Product master, batch count, stock and standard price.", "inventory", ["product", "family", "status"], ["detail"]),

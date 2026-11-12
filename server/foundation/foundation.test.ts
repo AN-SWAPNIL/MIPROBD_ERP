@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import sharp from "sharp";
 import { randomBytes, randomUUID } from "node:crypto";
 import express, { type Request } from "express";
 import { z } from "zod";
@@ -159,10 +160,10 @@ test("hosted foundation: real auth, persisted profiles, access revocation, priva
     assert.equal(resetLogin.response.status, 200);
     salesToken = resetLogin.body.data.token;
     console.log("Hosted: testing private upload and cross-employee denial");
-    const upload = await call("/uploads", { method: "POST", token: adminToken, body: { employeeId: created[0].employeeId, purpose: "employee-avatar", fileName: "test.png", mimeType: "image/png", sizeBytes: 68 } });
+    const bytes = await sharp({ create: { width: 32, height: 32, channels: 3, background: "#218eae" } }).png().toBuffer();
+    const upload = await call("/uploads", { method: "POST", token: adminToken, body: { employeeId: created[0].employeeId, purpose: "employee-avatar", fileName: "test.png", mimeType: "image/png", sizeBytes: bytes.length } });
     assert.equal(upload.response.status, 201);
     objects.push(upload.body.data.path);
-    const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aG1sAAAAASUVORK5CYII=", "base64");
     const { error: uploadError } = await ctx.admin.storage.from("erp-documents").uploadToSignedUrl(upload.body.data.path, upload.body.data.token, bytes, { contentType: "image/png" });
     assert.equal(uploadError, null, "Signed upload should succeed");
     assert.equal((await call(`/uploads/${upload.body.data.id}/complete`, { method: "POST", token: adminToken, body: {} })).response.status, 200);

@@ -90,6 +90,7 @@ export type Supplier = {
 export type PostedReversal = { reversalReason?: string; reversalDate?: string; reversedAt?: string; reversedByUserId?: string };
 
 export type SupplierSettlement = PostedReversal & {
+  purchaseReceiptId?: string;
   id: string;
   date: string;
   supplierId: string;
@@ -238,6 +239,8 @@ export type ImportCase = {
   paymentMode: PaymentMode;
   lcNumber?: string;
   lcAmount?: DecimalString;
+  lcBankAmount?: DecimalString;
+  lcOtherAmount?: DecimalString;
   lcOpenDate?: string;
   lcExpiryDate?: string;
   ttReference?: string;
@@ -317,7 +320,7 @@ export type StockBatch = {
   warehouse: string;
   location?: string;
   landedCostPerUnit: DecimalString;
-  sourceType?: "Import Receipt" | "Opening Stock" | "Stock Correction" | "Customer Return" | "Supplier Replacement";
+  sourceType?: "Import Receipt" | "Purchase Receipt" | "Opening Stock" | "Stock Correction" | "Customer Return" | "Supplier Replacement";
   availableFromDate?: string;
   condition?: "Saleable" | "Quarantine" | "Damaged" | "Expired";
   expiryStatus?: "Expired" | "1 Month Alert" | "3 Month Alert" | "6 Month Alert" | "Normal";

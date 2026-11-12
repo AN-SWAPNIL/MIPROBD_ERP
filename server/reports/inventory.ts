@@ -8,6 +8,12 @@ import { effectiveCondition, heldAt } from "../operations/hold-query.js";
 export function inventorySpec(id: string, user: User, q: Query): Spec | undefined {
   const dimensions = { product: dim("product_id", "product"), family: dim("family"), status: dim("status") };
   const canCost = hasCapability(user, "view_sensitive_cost");
+  if (id === "purchase-receipts") return {
+    base: sql`select r.id,r.number reference,r.received_date date,r.supplier_id,r.supplier_name supplier,r.reference supplier_reference,l.product_id,p.code,p.name product,p.family,p.unit,l.quantity,l.value_bdt value,r.created_by_name actor from erp_private.purchase_receipts r join erp_private.purchase_lines l on l.receipt_id=r.id join erp_private.products p on p.id=l.product_id where ${between(sql`r.received_date`, q)}`,
+    dimensions: { ...dimensions, supplier: dim("supplier_id", "supplier") }, result: raw("select * from scoped order by date,reference,code"),
+    basis: "Posted purchase receipts by actual receipt date. BDT value is quantity x supplied unit price x captured currency rate, rounded per line. Each receipt posts the matching supplier payable; payments are recorded separately in Accounts. Imports and opening stock are not included.",
+    columns: [text("date", "Received"), text("reference", "Receipt"), text("supplier", "Supplier"), text("supplier_reference", "Supplier Invoice / Reference"), text("code", "Code"), text("product", "Product"), text("unit", "Unit"), qty("quantity", "Received Quantity"), ...(canCost ? [money("value", "Received Value (BDT)")] : []), text("actor", "Posted By")]
+  };
   const physical = sql`coalesce((select sum(m.quantity_delta) from erp_private.stock_movements m where m.batch_id=b.id and m.date<=${q.to}::date),0)`;
   const condition = effectiveCondition(sql`b.id`, sql`${q.to}::date`);
   const held = sql`case when ${condition}='Saleable' then ${heldAt(sql`b.id`, sql`${q.to}::date`)} else ${physical} end`;

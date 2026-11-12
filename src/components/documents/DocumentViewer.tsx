@@ -7,6 +7,7 @@ import { attachmentMime, attachmentLabel, hasDocumentPreview, officeMimes } from
 import { foundationMode } from "../../lib/runtime";
 
 export function readDocumentUpload(file: File): Promise<DocumentUpload> {
+  if (file.size === 0) return Promise.reject(new Error("The selected file is empty. Choose a non-empty document."));
   if (file.size > 5_000_000) return Promise.reject(new Error("Attachment must be 5 MB or smaller."));
   let mimeType:string;
   try{mimeType=attachmentMime(file.name,file.type,!foundationMode);}catch(error){return Promise.reject(error);}

@@ -76,7 +76,8 @@ test("hosted sales: customer ownership, quotation versions, canonical totals, co
     await expect(`/quotations/${quote.id}`, one.token, { version: quote.version! + 1, remarks: "Converted change" }, 423, "PATCH");
     assert.equal((await expect("/orders", one.token, undefined, 200, "GET", undefined, other)).find((row: { id: string }) => row.id === order.id).deliveryInstruction, "Reception 2");
     await assert.rejects(ctx.db.update(orderLines).set({ lineTotal: "0.01" }).where(eq(orderLines.orderId, order.id)), (error: unknown) => (error as { cause?: { code?: string }; code?: string }).cause?.code === "55000" || (error as { code?: string }).code === "55000");
-    await assert.rejects(ctx.db.delete(customerEntries).where(eq(customerEntries.customerId, customer.id)), (error: unknown) => (error as { cause?: { code?: string }; code?: string }).cause?.code === "55000" || (error as { code?: string }).code === "55000");
+    // Restricted runtime denies DELETE before the append-only trigger is reached.
+    await assert.rejects(ctx.db.delete(customerEntries).where(eq(customerEntries.customerId, customer.id)), (error: unknown) => ["42501", "55000"].includes((error as { cause?: { code?: string }; code?: string }).cause?.code ?? (error as { code?: string }).code ?? ""));
     const exposed = await ctx.db.execute<{ count: number }>(sql`select count(*)::int as count from pg_tables where schemaname = 'erp_private' and tablename in ('customers','quotations','quotation_lines','sales_orders','order_lines','customer_entries') and not rowsecurity`);
     assert.equal(exposed.rows[0].count, 0);
     console.log("Hosted sales: all customer/quotation/order checks passed; no stock or receivable was posted by conversion.");

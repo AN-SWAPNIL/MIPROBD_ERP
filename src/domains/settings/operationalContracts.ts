@@ -12,7 +12,7 @@ export const warehouseData = z.object({
     ctx.addIssue({ code: "custom", path: ["locations"], message: "BIN locations must be unique." });
 });
 export const presetData = z.object({
-  name: z.string().trim().min(2).max(120), category: importCostCategory,
+  name: z.string().trim().min(2).max(120), category: z.string().trim().min(1).max(80),
   suggestedAllocationMethod: allocationChoice.optional(), requiresExplicitChoice: z.literal(true), active: z.boolean()
 }).strict();
 export const decisionData = z.object({

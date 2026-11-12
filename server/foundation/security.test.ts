@@ -8,6 +8,27 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import { jsonBodyError } from "../http-security.js";
 import { localApiRequest } from "../testing/http.js";
+import { logPasswordRejection, passwordUpdateError } from "./password-errors.js";
+
+test("password errors distinguish reused passwords, strength, MFA and expired recovery without exposing provider text", () => {
+  const reused = passwordUpdateError({ code: "same_password", status: 422 });
+  assert.equal(reused.status, 422); assert.match(reused.message, /different password/);
+  assert.match(passwordUpdateError({ code: "weak_password", reasons: ["characters"] }).message, /uppercase and lowercase/);
+  assert.match(passwordUpdateError({ code: "weak_password", reasons: ["pwned"] }).message, /data breach/);
+  assert.equal(passwordUpdateError({ code: "insufficient_aal" }).status, 428);
+  assert.equal(passwordUpdateError({ code: "reauthentication_needed" }).status, 401);
+  assert.equal(passwordUpdateError({ code: "session_not_found" }).status, 401);
+  assert.equal(passwordUpdateError({ code: "over_request_rate_limit" }).status, 429);
+  assert.equal(passwordUpdateError({ status: 500 }).status, 503);
+  const logs: unknown[][] = []; const original = console.warn;
+  try {
+    console.warn = (...args) => { logs.push(args); };
+    logPasswordRejection("reset", { code: "same_password", status: 422 });
+    logPasswordRejection("reset", { code: "private\nmalformed", status: 9999 });
+  } finally { console.warn = original; }
+  assert.deepEqual(logs[0][1], { operation: "reset", code: "same_password", status: 422 });
+  assert.deepEqual(logs[1][1], { operation: "reset", code: "unknown", status: undefined });
+});
 
 test("second-factor access fails closed and privileged production identities require enrollment", () => {
   const user = { role: "Super Admin", status: "Active", capabilities: [] } as unknown as User;

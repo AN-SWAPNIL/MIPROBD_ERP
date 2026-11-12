@@ -10,6 +10,8 @@ import { hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
 import { ErrorBlock, LoadingBlock, Modal, Panel, Segmented, TableFrame, inputClass, labelClass, textareaClass } from "../components";
 import { allocationChoice, importCostCategory, decisionInput, presetInput, warehouseInput, type DecisionData, type PresetData, type WarehouseData } from "./operationalContracts";
 import { operationalService as api } from "./operationalService";
+import OptionSelect from "../masters/OptionSelect";
+import { fieldLabel } from "../../lib/api/validation";
 
 type View = "warehouse" | "presets" | "decisions";
 type Preset = PresetData & { id: string; version: number };
@@ -43,7 +45,7 @@ function Field({ label, children }: { label: string; children: ReactElement<{ id
 }
 function ValidatedForm({ children, schema, body, busy, onSave }: { children: ReactNode; schema: z.ZodType; body: unknown; busy: boolean; onSave: (body: unknown) => void }) {
   const [error, setError] = useState("");
-  function submit(e: FormEvent) { e.preventDefault(); const parsed = schema.safeParse(body); if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? "Check the entered values."); return; } setError(""); onSave(parsed.data); }
+  function submit(e: FormEvent) { e.preventDefault(); const parsed = schema.safeParse(body); if (!parsed.success) { setError(parsed.error.issues.map((issue) => `${fieldLabel(issue.path.join("."))}: ${issue.message}`).join("; ")); return; } setError(""); onSave(parsed.data); }
   return <form className="grid gap-4" onSubmit={submit}>{error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}<fieldset disabled={busy} className="grid min-w-0 gap-4">{children}<div className="flex justify-end"><Button type="submit" variant="primary" disabled={busy} icon={<Save className="h-4 w-4" />}>Save Changes</Button></div></fieldset></form>;
 }
 function WarehouseForm({ value, editable, busy, onSave }: { value: WarehouseData & { version: number }; editable: boolean; busy: boolean; onSave: (b: unknown) => void }) {
@@ -52,10 +54,10 @@ function WarehouseForm({ value, editable, busy, onSave }: { value: WarehouseData
   const fields = <><div className="grid gap-4 sm:grid-cols-2">{(["address", "contactPerson", "phone"] as const).map((key) => <Field key={key} label={{ address: "Address", contactPerson: "Contact Person", phone: "Phone" }[key]}><input className={inputClass} value={form[key]} maxLength={500} disabled={!editable} onChange={(e) => setForm({ ...form, [key]: e.target.value })} /></Field>)}</div><Field label="BIN / Rack Locations (one per line)"><textarea className={textareaClass} value={locations} disabled={!editable} onChange={(e) => setLocations(e.target.value)} /></Field></>;
   return editable ? <ValidatedForm schema={warehouseInput} body={{ version, data: { ...data, locations: locations.split("\n").map((s) => s.trim()).filter(Boolean) }, reason }} busy={busy} onSave={onSave}>{fields}<Field label="Reason for Change"><input className={inputClass} value={reason} minLength={5} maxLength={1000} required onChange={(e) => setReason(e.target.value)} /></Field></ValidatedForm> : <div className="grid gap-4">{fields}</div>;
 }
-function PresetForm({ value, busy, onSave }: { value?: Preset; busy: boolean; onSave: (b: unknown) => void }) {
+export function PresetForm({ value, busy, onSave }: { value?: Preset; busy: boolean; onSave: (b: unknown) => void }) {
   const [name, setName] = useState(value?.name ?? ""); const [category, setCategory] = useState(value?.category ?? "Freight"); const [method, setMethod] = useState(value?.suggestedAllocationMethod ?? ""); const [active, setActive] = useState(value?.active ?? true); const [reason, setReason] = useState("");
   return <ValidatedForm schema={presetInput} body={{ ...(value ? { version: value.version } : {}), data: { name, category, ...(method ? { suggestedAllocationMethod: method } : {}), active, requiresExplicitChoice: true }, reason }} busy={busy} onSave={onSave}>
-    <Field label="Name"><input aria-label="Preset name" className={inputClass} required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></Field><Field label="Category"><select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value as typeof category)}>{importCostCategory.options.map((c) => <option key={c}>{c}</option>)}</select></Field>
+    <Field label="Name"><input aria-label="Preset name" className={inputClass} required minLength={2} maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></Field><Field label="Category"><OptionSelect kind="import-cost-category" label="Cost category" required value={category} options={importCostCategory.options} onChange={setCategory} /></Field>
     <Field label="Suggested Allocation Basis"><select className={inputClass} value={method} onChange={(e) => setMethod(e.target.value as typeof method)}><option value="">Not confirmed</option>{allocationChoice.options.map((m) => <option key={m}>{m}</option>)}</select></Field>
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />Active</label><Field label="Reason for Change"><input className={inputClass} required minLength={5} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
   </ValidatedForm>;

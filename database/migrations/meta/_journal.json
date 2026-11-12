@@ -491,6 +491,13 @@
       "when": 1793550176839,
       "tag": "0069_operational_health_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1794509786994,
+      "tag": "0070_flexible_masters_and_purchases",
+      "breakpoints": true
     }
   ]
 }

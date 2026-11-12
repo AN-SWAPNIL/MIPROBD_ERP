@@ -20,6 +20,7 @@ type LoginValues = z.infer<typeof loginSchema>;
 
 type LocationState = {
   from?: string;
+  passwordReset?: boolean;
 };
 
 export default function LoginPage() {
@@ -56,6 +57,7 @@ export default function LoginPage() {
 
   return (
     <AuthShell title="Sign in to MIPRO ERP" subtitle={demoMode ? "Demo mode is active. Select a role account or enter an assigned credential." : "Enter your assigned employee credentials. Access is controlled by role and capability."}>
+      {state?.passwordReset ? <p role="status" className="mb-4 text-sm font-semibold text-emerald-700">Password updated. Sign in with your new password.</p> : null}
       <form className="grid gap-4" onSubmit={handleSubmit(submit)}>
         {formError ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{formError}</div> : null}
         <label>

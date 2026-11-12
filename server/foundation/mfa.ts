@@ -10,7 +10,7 @@ import { clearSessionCookies, refreshCookie, writeSessionCookies } from "./sessi
 
 export function createMfaRouter(ctx: Context) {
   const router = Router();
-  async function owner(req: Request) { return authenticate(ctx, req, false, true); }
+  async function owner(req: Request, allowRecovery = false) { return authenticate(ctx, req, allowRecovery, true); }
   async function factors(actor: Identity) {
     const { data, error } = await ctx.admin.auth.getUser(actor.token);
     if (error || !data.user) throw new HttpError(401, "Please sign in again.");
@@ -24,7 +24,7 @@ export function createMfaRouter(ctx: Context) {
     return api;
   }
   router.get("/mfa", async (req, res) => {
-    const actor = await owner(req); const own = await factors(actor);
+    const actor = await owner(req, true); const own = await factors(actor);
     res.json({ success: true, data: { security: actor.security, factors: own.factors.filter((f) => f.factor_type === "totp").map((f) => ({ id: f.id, name: f.friendly_name || "Authenticator", status: f.status })) }, message: "Own authenticator settings loaded" });
   });
   router.post("/mfa/enroll", async (req, res) => {
@@ -42,19 +42,19 @@ export function createMfaRouter(ctx: Context) {
     res.status(201).json({ success: true, data: { id: data.id, qrCode: data.totp.qr_code, secret: data.totp.secret, uri: data.totp.uri }, message: "Confirm a code to finish setup; keep the setup key private" });
   });
   router.post("/mfa/challenge", async (req, res) => {
-    const input = mfaChallengeInput.parse(req.body); const actor = await owner(req);
+    const input = mfaChallengeInput.parse(req.body); const actor = await owner(req, true);
     await rateLimit(ctx, `mfa-challenge:${actor.user.id}`, 20);
     const own = await factors(actor);
-    if (!own.factors.some((f) => f.id === input.factorId && f.factor_type === "totp")) throw new HttpError(404, "Own authenticator not found.");
+    if (!own.factors.some((f) => f.id === input.factorId && f.factor_type === "totp" && (actor.purpose !== "recovery" || f.status === "verified"))) throw new HttpError(404, "Own authenticator not found.");
     const api = await client(req, actor); const { data, error } = await api.auth.mfa.challenge({ factorId: input.factorId });
     if (error || !data) throw new HttpError(422, "A verification challenge could not be created. Retry shortly.");
     res.json({ success: true, data: { id: data.id }, message: "Authenticator challenge created" });
   });
   router.post("/mfa/verify", async (req, res) => {
-    const input = mfaVerifyInput.parse(req.body); const actor = await owner(req);
+    const input = mfaVerifyInput.parse(req.body); const actor = await owner(req, true);
     await rateLimit(ctx, `mfa-verify:${actor.user.id}`, 10);
     const own = await factors(actor);
-    if (!own.factors.some((f) => f.id === input.factorId && f.factor_type === "totp")) throw new HttpError(404, "Own authenticator not found.");
+    if (!own.factors.some((f) => f.id === input.factorId && f.factor_type === "totp" && (actor.purpose !== "recovery" || f.status === "verified"))) throw new HttpError(404, "Own authenticator not found.");
     const api = await client(req, actor); const result = await api.auth.mfa.verify(input);
     if (result.error || !result.data) { await audit(ctx.db, actor.user.id, "Authenticator verification failed", "Employee", actor.user.id); throw new HttpError(422, "Code is invalid, expired or already used. Try a fresh code."); }
     const { data: verified, error } = await ctx.admin.auth.getUser(result.data.access_token);
