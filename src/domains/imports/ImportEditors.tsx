@@ -44,7 +44,6 @@ export function ImportLogisticsSummary({ record, stage, canSeeCost }: { record: 
     <KeyValue label="Production status" value={record.productionStatus || "Not yet recorded"} /><KeyValue label="Follow-up note" value={record.productionFollowUpNote} /><KeyValue label="Target shipment" value={record.expectedShipmentDate} />
   </> : <>
     <KeyValue label="Commercial invoice" value={[record.commercialInvoiceNumber, record.commercialInvoiceDate].filter(Boolean).join(" | ")} /><KeyValue label="Bill of lading" value={record.blNumber} /><KeyValue label="Container" value={[record.containerNumber, record.containerType].filter(Boolean).join(" | ")} /><KeyValue label="Vessel / Carrier" value={record.vesselName} /><KeyValue label="ETD" value={record.etd} /><KeyValue label="ETA" value={record.eta} />
-    {stage === 5 ? <KeyValue label="Port arrival" value={["At Port", "Costing", "Cost Finalized", "Partially Received", "Received", "Closed"].includes(record.status) ? "At port or later" : "Not yet marked at port"} /> : null}
   </>}</dl>;
 }
 
@@ -65,7 +64,7 @@ export function ShipmentEditor({ record, stage = 2, busy, error, onSubmit }: { r
     if (stage === 2 && form.paymentMode === "LC" && form.lcExpiryDate && form.lcOpenDate && form.lcExpiryDate < form.lcOpenDate) return setLocalError("LC expiry date must not be before the LC open date.");
     if (stage === 4 && form.eta && form.etd && form.eta < form.etd) return setLocalError("ETA must not be before ETD.");
     setLocalError("");
-    const fields: (keyof typeof form)[] = stage === 3 ? ["productionStatus", "productionFollowUpNote"] : stage === 4 || stage === 5 ? ["commercialInvoiceNumber", "commercialInvoiceDate", "blNumber", "containerNumber", "containerType", "vesselName", "etd", "eta"] : ["paymentMode", "lcNumber", "lcAmount", "lcBankAmount", "lcOtherAmount", "lcOpenDate", "lcExpiryDate", "ttReference", "ttAmount", "ttDate", "bank", "currency", "exchangeRate", "rateDate", "rateSource"];
+    const fields: (keyof typeof form)[] = stage === 3 ? ["productionStatus", "productionFollowUpNote"] : stage === 4 ? ["commercialInvoiceNumber", "commercialInvoiceDate", "blNumber", "containerNumber", "containerType", "vesselName", "etd", "eta"] : ["paymentMode", "lcNumber", "lcAmount", "lcBankAmount", "lcOtherAmount", "lcOpenDate", "lcExpiryDate", "ttReference", "ttAmount", "ttDate", "bank", "currency", "exchangeRate", "rateDate", "rateSource"];
     const payload = paymentPayload(Object.fromEntries(fields.map((key) => [key, form[key]])));
     if (stage === 2 && form.paymentMode === "LC" && hasSplitInput) delete payload.lcAmount;
     onSubmit(payload);
