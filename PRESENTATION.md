@@ -362,27 +362,39 @@ Draft -> PI Received -> LC/TT Opened -> In Production -> Shipped
 
 Cancelled is also supported.
 
-Users do not choose final states from a generic status field. **Mark In Production**, **Mark Shipped**, **Mark At Port**, **Cancel Case**, and **Close Case** are controlled actions. Cost finalization and warehouse receipt set their own statuses. Closed/cancelled cases are read-only; only an unposted cancelled/draft case may be deleted.
+Users do not choose final states from a generic status field. **Mark In Production**, **Mark Shipped**, **Mark At Port**, **Mark Costing**, **Cancel Case**, and **Close Case** are controlled actions. A successful milestone action opens its matching workspace tab. Cost finalization and warehouse receipt set their own statuses. Closed/cancelled cases are read-only; only an unposted cancelled/draft case may be deleted.
 
-### Six sections
+### Ten workspace tabs
 
-1. **Commercial & Products**
-   Supplier, PO, optional PI, products, quantities, FOB, cartons, and CBM. Authoritative FOB/CBM totals are recomputed by the API.
+1. **PO / Draft**
+   Supplier, permanent import reference, PO and expected shipment date.
 
-2. **LC / TT & Shipment**
-   Payment mode, LC/TT reference and amount/date, bank, rate snapshot, commercial invoice, production follow-up, BL, container, vessel, ETD, and ETA.
+2. **PI & Products**
+   Supplier PI and canonical products, quantities, FOB, cartons and CBM. Authoritative FOB/CBM totals are recomputed by the API.
 
-3. **Documents**
-   Actual PDF/image content plus metadata for PI, LC/Swift, commercial invoice, packing list, COA, CE, ISO, BL, customs assessment, duty proof, freight, insurance, bank advice, and C&F evidence. View opens the shared protected viewer; Extract Fields opens a review panel and never overwrites data automatically.
+3. **LC / TT**
+   Payment reference, bank/other LC amount breakdown, dates, bank and exchange-rate snapshot.
 
-4. **Costs & Allocation**
+4. **Production**
+   Production status, follow-up note and target shipment date.
+
+5. **Shipment**
+   Commercial invoice, bill of lading, container, carrier, ETD and ETA. These fields are edited here, not repeated in Documents. Mark At Port records the arrival milestone.
+
+6. **Documents**
+   Uploaded PDF, image, XLSX, DOCX, PPTX, CSV and TXT evidence. PDFs/images can be previewed; Office/text files can be downloaded. Sensitive documents remain role-protected. At Port remains a case status, not a duplicate shipment form.
+
+7. **Costs & Allocation**
    Any number of named costs with currency, historical exchange rate, vendor/payment metadata, attachment, product scope, and an explicit allocation method.
 
-5. **Landed-Cost Result**
-   Exact shipment reconciliation, final product total, landed cost per unit, and expandable explanations.
+8. **Landed Cost**
+   Review Landed Cost opens the reconciled preview directly from the cost rows. It shows final product totals, landed cost per unit and allocation explanations. The authorized finalizer uses Finalize Snapshot; this is not a manual Mark Cost Finalized action.
 
-6. **Warehouse Receipt & Activity**
-   Receiving unlocks only after cost finalization. Partial and final receipts remain connected to the same import case.
+9. **Receiving**
+   Receive to Warehouse unlocks after finalization. Batch details and partial/final receipts stay here and remain linked to the import.
+
+10. **Activity & Closure**
+    Completion summary and events derived from saved creation, visible attachments, authorized snapshot history and posted receipts. This is not another receiving form or a replacement for the audit report. View Warehouse Receipts returns to Receiving; Close Case is available when fully received.
 
 ### Five allocation methods
 
