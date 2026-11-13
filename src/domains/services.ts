@@ -5,6 +5,7 @@ import { foundationMode } from "../lib/runtime";
 import { apiRequest, ApiRequestError } from "../lib/api/client";
 import { responseIssues } from "../lib/api/validation";
 import { safeApiMessage } from "../lib/api/safeErrors";
+import { documentUploadBlob } from "../lib/files/uploadBytes";
 import { paymentPayload } from "./imports/paymentPayload";
 import { PersistentReportSchema, ReportCatalogueEntrySchema, type PersistentReportQuery } from "./reports/persistentContracts";
 import type {
@@ -190,8 +191,8 @@ export const importService = {
   removeCost: (id: string, costId: string) => request("/api/imports/" + id + "/costs/" + costId, ImportCaseSchema, { method: "DELETE" }),
   async addDocument(id: string, payload: Pick<ImportDocument, "type" | "name"> & { upload: DocumentUpload; sensitive?: boolean }) {
     if (!foundationMode) return post<ImportDocument>("/api/imports/" + id + "/documents", payload, ImportDocumentSchema);
+    const bytes = documentUploadBlob(payload.upload);
     const upload = await apiRequest<{ id: string; signedUrl: string }>("/api/uploads", { method: "POST", body: JSON.stringify({ purpose: "import-document", importId: id, documentType: payload.type, sensitive: payload.sensitive, fileName: payload.upload.fileName, mimeType: payload.upload.mimeType, sizeBytes: payload.upload.sizeBytes }) });
-    const bytes = await fetch(payload.upload.fileDataUrl).then((response) => response.blob());
     const stored = await fetch(upload.data.signedUrl, { method: "PUT", headers: { "Content-Type": payload.upload.mimeType }, body: bytes });
     if (!stored.ok) throw new Error("Document upload failed.");
     await apiRequest(`/api/uploads/${upload.data.id}/complete`, { method: "POST", body: "{}" });
@@ -387,8 +388,8 @@ export const settingsService = {
 export const fileService = {
   attachImportDocument: importService.addDocument,
   async prepareExpenseReceipt(file: DocumentUpload) {
+    const bytes = documentUploadBlob(file);
     const upload = await apiRequest<{ id: string; signedUrl: string }>("/api/uploads", { method: "POST", body: JSON.stringify({ purpose: "expense-receipt", fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.sizeBytes }) });
-    const bytes = await fetch(file.fileDataUrl).then((response) => response.blob());
     const stored = await fetch(upload.data.signedUrl, { method: "PUT", headers: { "Content-Type": file.mimeType }, body: bytes });
     if (!stored.ok) throw new Error("Receipt upload failed. The expense has not been posted.");
     await apiRequest(`/api/uploads/${upload.data.id}/complete`, { method: "POST", body: "{}" });
