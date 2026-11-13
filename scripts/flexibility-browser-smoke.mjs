@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { chromium } from "@playwright/test";
 import sharp from "sharp";
 
-const origin = "http://localhost:5178";
+const origin = process.env.SMOKE_ORIGIN ?? "http://localhost:5178";
+const vercel = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
+const csp = vercel.headers.find((entry) => entry.source === "/(.*)").headers.find((header) => header.key === "Content-Security-Policy").value;
 const today = new Date().toISOString().slice(0, 10);
 const future = `${Number(today.slice(0, 4)) + 2}${today.slice(4)}`;
 const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#008ca8" } }).png().toBuffer();
@@ -21,6 +23,11 @@ try {
     const importLine = () => ({ id: "ui-item", productId: productRows[0].id, productCode: productRows[0].code, productName: productRows[0].name, quantity: "1", unit: productRows[0].unit, currency: "USD", fobUnitForeign: "0", exchangeRate: "0", fobTotalBdt: "0", cbmPerCarton: "0", cartonCount: "0", totalCbm: "0", cbmMode: "CALCULATED" });
     try {
       await context.addInitScript((value) => globalThis.localStorage.setItem("mipro-erp-session", JSON.stringify(value)), session);
+      await context.route((url) => url.origin === origin && !url.pathname.startsWith("/api/") && !url.pathname.startsWith("/__test_upload/"), async (route) => {
+        if (route.request().resourceType() !== "document") return route.continue();
+        const response = await route.fetch();
+        await route.fulfill({ response, headers: { ...response.headers(), "content-security-policy": csp } });
+      });
       await context.route((url) => url.origin === origin && url.pathname.startsWith("/__test_upload/"), (route) => route.fulfill({ status: 200, body: "{}" }));
       await context.route((url) => url.origin === origin && url.pathname.startsWith("/api/"), async (route) => {
         const request = route.request(); const url = new URL(request.url()); const path = url.pathname; const body = request.method() === "GET" ? undefined : request.postDataJSON(); let data; let status = 200;
@@ -72,6 +79,7 @@ try {
         await route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ success: true, data, message: "Saved" }) });
       });
       const page = await context.newPage(); page.setDefaultTimeout(20_000); page.on("pageerror", (error) => errors.push(error.message));
+      page.on("console", (message) => { if (message.type() === "error" && /Content Security Policy|Refused to connect/i.test(message.text())) errors.push(message.text()); });
       const capture = async (name) => { assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth + 2), true, `${name}: viewport overflow`); await page.screenshot({ path: `artifacts/backend/flexibility/${name}-${width}.png`, fullPage: true }); };
       await page.goto(`${origin}/backend/imports/new`);
       await page.getByRole("heading", { name: "Create draft import", exact: true }).waitFor();
