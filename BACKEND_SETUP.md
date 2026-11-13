@@ -105,6 +105,8 @@ Supabase Cron/pg_net/Vault run the configured UAT invitation, queue-health and r
 
 Super Admin can manage company setup and self-approve valid policies/configuration. Named staff can prepare and act within delegated permissions; assigning a broad owner role is not a substitute for limited access.
 
+Before stock/value posting, use **Expenses & Accounts -> General Ledger -> Posting Mapping -> Starter Setup** (or **Set Up Accounting** in Receiving). Review the proposed chart and company start date, save the draft, then explicitly approve it as Super Admin. This creates no opening balances or fake payment accounts. An absent posting mapping is a missing company prerequisite, not a Super Admin permission denial; keep `ERP_REQUIRE_LEDGER_CONFIGURATION=true`. The new workflow uses existing audit/configuration tables and needs no migration or new environment variables.
+
 You still personally set your password/authenticator, configure SMTP in the **new UAT project**, verify actual mail/link delivery, supply source-backed company settings/openings, approve commercial hosting/ownership, accept field privacy/retention, and test actual phones/printers. OpenStreetMap needs no Google key for the current map; photos remain optional. Full guidance: [MANUAL_SETUP.md](MANUAL_SETUP.md).
 
 ## Housekeeping

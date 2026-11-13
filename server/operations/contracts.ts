@@ -27,7 +27,7 @@ export const commercialInput = z.object({
   productionStatus: text.optional(), productionFollowUpNote: z.string().trim().max(2000).optional(),
   blNumber: text.optional(), containerNumber: text.optional(), containerType: text.optional(), vesselName: text.optional(), etd: optionalDate, eta: optionalDate, notes: z.string().trim().max(3000).optional()
 });
-export const createImportInput = commercialInput.extend({ supplierId: text.min(1), items: z.array(itemInput).min(1).max(100) });
+export const createImportInput = commercialInput.extend({ supplierId: text.min(1), items: z.array(itemInput).min(1).max(100), guidedWorkflow: z.boolean().default(false) });
 export const updateImportInput = commercialInput.extend({
   supplierId: text.min(1),
   paymentMode: commercialInput.shape.paymentMode.removeDefault(), currency: commercialInput.shape.currency.removeDefault(),

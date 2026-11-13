@@ -12,6 +12,7 @@ import { lockActor, newId } from "../operations/common.js";
 import { createApproval, consumeApproval } from "../controls/service.js";
 import { balancedLines } from "./money.js";
 import { checkLedgerDate, insertJournal, journalHash, lockLedger, postLedgerEvent, readJournal, validateLedgerAccounts } from "./service.js";
+import { draftStarterLedger } from "./starter.js";
 
 const versionInput = z.object({ version: z.number().int().positive() }).strict();
 const pageInput = z.object({ page: z.coerce.number().int().positive().max(10000).default(1), state: z.enum(["Draft", "Submitted", "Posted", "Rejected", "Superseded"]).optional() }).strict();
@@ -32,6 +33,14 @@ export function createLedgerRouter(ctx: Context) {
     const rows = await ctx.db.select({ id: cashAccounts.id, name: cashAccounts.name, active: cashAccounts.active }).from(cashAccounts).orderBy(cashAccounts.name, cashAccounts.id).limit(101);
     if (rows.length > 100) throw new HttpError(422, "Cash mapping exceeds 100 accounts. Review the reference limit before configuring the ledger.");
     res.json({ success: true, data: rows, message: "Cash/bank mapping references" });
+  });
+  router.post("/ledger/configurations/starter", async (req, res) => {
+    const id = await ctx.db.transaction(async tx => {
+      const user = await lockActor(tx, identity(res), "settings", "create");
+      assertAllowed(user.role === "Super Admin");
+      return draftStarterLedger(tx, user, req.body);
+    });
+    res.status(201).json({ success: true, data: { id }, message: "Starter chart and mapping draft saved. Super Admin approval is still required." });
   });
   router.get("/ledger/accounts", async (_req, res) => {
     const rows = await ctx.db.select({ id: ledgerAccounts.id, code: ledgerAccounts.code, name: ledgerAccounts.name, kind: ledgerAccounts.kind, active: ledgerAccounts.active }).from(ledgerAccounts).orderBy(ledgerAccounts.code, ledgerAccounts.id).limit(1001);

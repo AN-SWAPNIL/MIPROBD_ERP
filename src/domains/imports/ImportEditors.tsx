@@ -15,17 +15,23 @@ import { useAuthStore } from "../../lib/auth/session";
 import { hasCapability } from "../../lib/permissions/effectiveAccess";
 const Decimal = DecimalJs.clone({ precision: 48, rounding: DecimalJs.ROUND_HALF_UP });
 
-export function CommercialEditor({ record, busy, onSubmit }: { record: ImportCase; busy: boolean; onSubmit: (payload: Partial<ImportCase>) => void }) {
+export function CommercialEditor({ record, busy, onSubmit, requirePi = false }: { record: ImportCase; busy: boolean; onSubmit: (payload: Partial<ImportCase>) => void; requirePi?: boolean }) {
   const [form, setForm] = useState({ supplierId: record.supplierId ?? "", poNumber: record.poNumber, poDate: record.poDate, piNumber: record.piNumber ?? "", piDate: record.piDate ?? "", expectedShipmentDate: record.expectedShipmentDate ?? "", notes: record.notes ?? "" });
   const change = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
-  return <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); onSubmit(form); }}>
+  return <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); onSubmit(requirePi ? { piNumber: form.piNumber, piDate: form.piDate } : { supplierId: form.supplierId, poNumber: form.poNumber, poDate: form.poDate, expectedShipmentDate: form.expectedShipmentDate, notes: form.notes }); }}>
+    {!requirePi ? <>
     <label className="sm:col-span-2"><span className={labelClass}>Supplier</span><MasterSelect kind="suppliers" label="Supplier" value={form.supplierId} onChange={(value) => change("supplierId", value)} required disabled={!["Draft", "PI Received", "LC/TT Opened"].includes(record.status)} /></label>
     <label><span className={labelClass}>PO Number</span><input className={inputClass} value={form.poNumber} maxLength={200} onChange={(e) => change("poNumber", e.target.value)} required /></label>
     <label><span className={labelClass}>PO Date</span><input className={inputClass} type="date" value={form.poDate} onChange={(e) => change("poDate", e.target.value)} required /></label>
-    <label><span className={labelClass}>PI Number</span><input className={inputClass} value={form.piNumber} maxLength={200} onChange={(e) => change("piNumber", e.target.value)} placeholder="Pending supplier PI" /></label>
-    <label><span className={labelClass}>PI Date</span><input className={inputClass} type="date" value={form.piDate} onChange={(e) => change("piDate", e.target.value)} required={Boolean(form.piNumber)} /></label>
+    </> : null}
+    {requirePi ? <>
+    <label><span className={labelClass}>PI Number</span><input className={inputClass} value={form.piNumber} maxLength={200} onChange={(e) => change("piNumber", e.target.value)} placeholder="Pending supplier PI" required={requirePi} /></label>
+    <label><span className={labelClass}>PI Date</span><input className={inputClass} type="date" value={form.piDate} onChange={(e) => change("piDate", e.target.value)} required={Boolean(form.piNumber) || requirePi} /></label>
+    </> : null}
+    {!requirePi ? <>
     <label><span className={labelClass}>Expected Shipment</span><input className={inputClass} type="date" value={form.expectedShipmentDate} onChange={(e) => change("expectedShipmentDate", e.target.value)} /></label>
     <label className="sm:col-span-2"><span className={labelClass}>Notes</span><textarea className={inputClass + " h-24 py-2"} maxLength={3000} value={form.notes} onChange={(e) => change("notes", e.target.value)} /></label>
+    </> : null}
     <div className="flex justify-end sm:col-span-2"><Button type="submit" variant="primary" icon={<Save className="h-4 w-4" />} disabled={busy}>Save Commercial Data</Button></div>
   </form>;
 }

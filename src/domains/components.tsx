@@ -141,6 +141,12 @@ export function SectionAccordion({
   children,
   defaultOpen = true,
   hidden = false,
+  alwaysOpen = false,
+  highlighted = false,
+  current = false,
+  id,
+  footer,
+  onActivate,
   actions
 }: {
   title: string;
@@ -150,22 +156,32 @@ export function SectionAccordion({
   children: ReactNode;
   defaultOpen?: boolean;
   hidden?: boolean;
+  alwaysOpen?: boolean;
+  highlighted?: boolean;
+  current?: boolean;
+  id?: string;
+  footer?: ReactNode;
+  onActivate?: () => void;
   actions?: ReactNode;
 }) {
+  const Root = alwaysOpen ? "section" : "details";
+  const Heading = alwaysOpen ? "header" : "summary";
   return (
-    <details hidden={hidden} className="group overflow-hidden rounded-md border border-blue-200 bg-white shadow-sm" open={defaultOpen}>
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 border-l-4 border-l-red-600 bg-blue-50/70 px-4 py-3">
+    <Root id={id} onClickCapture={onActivate} aria-labelledby={id ? `${id}-heading` : undefined} data-highlighted={id ? highlighted : undefined} hidden={hidden} className={clsx("group scroll-mt-24 overflow-hidden rounded-md border bg-white shadow-sm", highlighted ? "border-cyan-600 ring-2 ring-cyan-500/30" : "border-blue-200")} {...(alwaysOpen ? {} : { open: defaultOpen })}>
+      <Heading className={clsx("flex list-none flex-wrap items-center gap-3 border-l-4 px-4 py-3", !alwaysOpen && "cursor-pointer", highlighted ? "border-l-cyan-600 bg-cyan-50" : "border-l-red-600 bg-blue-50/70")}>
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded bg-cyan-50 text-cyan-700"><Icon className="h-4 w-4" /></span>
         <div className="min-w-[140px] flex-1">
-          <h2 className="break-words text-sm font-bold text-blue-950 sm:text-base">{title}</h2>
+          <h2 id={id ? `${id}-heading` : undefined} className="break-words text-sm font-bold text-blue-950 sm:text-base">{title}</h2>
           {subtitle ? <p className="mt-0.5 truncate text-xs text-slate-500">{subtitle}</p> : null}
         </div>
         {status}
+        {current ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-900">Current step</span> : null}
         <span onClick={(event) => event.preventDefault()}>{actions}</span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180" />
-      </summary>
+        {!alwaysOpen ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180" /> : null}
+      </Heading>
       <div className="border-t border-blue-200">{children}</div>
-    </details>
+      {footer}
+    </Root>
   );
 }
 

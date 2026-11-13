@@ -362,9 +362,11 @@ Draft -> PI Received -> LC/TT Opened -> In Production -> Shipped
 
 Cancelled is also supported.
 
-Users do not choose final states from a generic status field. **Mark In Production**, **Mark Shipped**, **Mark At Port**, **Mark Costing**, **Cancel Case**, and **Close Case** are controlled actions. A successful milestone action opens its matching workspace tab. Cost finalization and warehouse receipt set their own statuses. Closed/cancelled cases are read-only; only an unposted cancelled/draft case may be deleted.
+All ten sections and their data remain open together on one scrollable page, including on mobile. The buttons above are section shortcuts, not panels that hide content: clicking one scrolls to and highlights its section. A separate Current step badge identifies the next incomplete business stage. Browsing or editing another section does not complete it. Each section has a completion action, disabled with a specific explanation when required information or an earlier confirmation is missing. Already completed steps cannot be marked twice. A successful action scrolls to the next required section.
 
-### Ten workspace tabs
+PO, PI and LC/TT confirmations are saved against the current record facts. Editing those facts invalidates the affected confirmations, without rewriting past postings. Production, shipment, arrival and costing use controlled milestone actions. Mark Cost Finalized creates the immutable snapshot; Receive to Warehouse posts actual quantities and accounting entries; Close Case requires all quantities to be received/rejected. These are not shortcut status changes. Existing records retain their original progress.
+
+### Ten Visible Workspace Sections
 
 1. **PO / Draft**
    Supplier, permanent import reference, PO and expected shipment date.
@@ -388,13 +390,25 @@ Users do not choose final states from a generic status field. **Mark In Producti
    Any number of named costs with currency, historical exchange rate, vendor/payment metadata, attachment, product scope, and an explicit allocation method.
 
 8. **Landed Cost**
-   Review Landed Cost opens the reconciled preview directly from the cost rows. It shows final product totals, landed cost per unit and allocation explanations. The authorized finalizer uses Finalize Snapshot; this is not a manual Mark Cost Finalized action.
+   Preview shows reconciled product totals, landed cost per unit and allocation explanations. The authorized finalizer uses Mark Cost Finalized, which calls the real snapshot finalization service. A shipment can have zero extra cost rows when its positive product costs are complete.
 
 9. **Receiving**
-   Receive to Warehouse unlocks after finalization. Batch details and partial/final receipts stay here and remain linked to the import.
+   Receive to Warehouse unlocks after finalization and accounting setup. The form identifies missing traceability, invalid dates and excess quantities before posting. Partial receipts stay on Receiving; the final receipt advances to Activity & Closure.
 
 10. **Activity & Closure**
     Completion summary and events derived from saved creation, visible attachments, authorized snapshot history and posted receipts. This is not another receiving form or a replacement for the audit report. View Warehouse Receipts returns to Receiving; Close Case is available when fully received.
+
+### First-time accounting setup
+
+Super Admin has permission to prepare and approve accounting configuration. Missing configuration is not an access denial: stock needs Inventory and Inventory Clearing ledger accounts before its value can be posted.
+
+1. From Receiving, click **Set Up Accounting**, or open **Expenses & Accounts -> General Ledger -> Posting Mapping**.
+2. Click **Starter Setup**. Review the proposed control/equity accounts and mappings to any existing payment accounts; choose the company's accounting start date and enter a setup reference.
+3. Acknowledge the proposal and **Save Starter Draft**. This creates no opening balances, transactions or approval.
+4. Review the saved mapping, click **Approve**, and record your decision reason. Super Admin may approve their own mapping; the action is audited.
+5. Click **Return to Import** and receive the goods. Any later error still rolls the whole receipt back; it never posts stock without its required ledger entry.
+
+Starter Setup does not invent bank accounts, capital, customer dues or opening stock. Verified company settings and opening balances remain separate inputs. Other employees see a request to contact Super Admin rather than a configuration shortcut.
 
 ### Five allocation methods
 
