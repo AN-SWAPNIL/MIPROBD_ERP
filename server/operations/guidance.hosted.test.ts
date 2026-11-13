@@ -27,6 +27,7 @@ test("hosted guidance: saved confirmations, safe starter draft, owner approval a
       const supplier = await h.expect("/suppliers", owner.token, { name: `DEV TEST Guidance ${h.suffix}`, country: "Bangladesh" }, 201);
       const product = await h.expect("/products", owner.token, { code: `GUIDE-${h.suffix}`, name: "DEV TEST Guidance Product", family: "Medical Consumables", variant: "Test", unit: "Piece" }, 201);
       let record = await h.expect("/imports", owner.token, { guidedWorkflow: true, supplierId: supplier.id, poNumber: `GUIDE-${h.suffix}`, poDate: today, items: [{ productId: product.id, quantity: "10", currency: "USD", fobUnitForeign: "10", exchangeRate: "120" }] }, 201, h.key("import"));
+      await h.expect(`/imports/${record.id}/reopen-case`, owner.token, {}, 409);
       assert.deepEqual(record.confirmedSteps, []);
       await h.expect(`/imports/${record.id}/confirm-step`, owner.token, { step: 2 }, 422);
       await h.expect(`/imports/${record.id}/confirm-step`, warehouse.token, { step: 0 }, 403);
@@ -54,9 +55,16 @@ test("hosted guidance: saved confirmations, safe starter draft, owner approval a
       const starter = { effectiveFrom: today, proofReference: "DEV TEST starter, rolled back", acknowledgeDraft: true };
       await h.expect("/ledger/configurations/starter", warehouse.token, starter, 403);
       await h.expect("/ledger/configurations/starter", owner.token, { ...starter, acknowledgeDraft: false }, 422);
-      const configuration = await h.expect("/ledger/configurations/starter", owner.token, starter, 201);
+      const stockAccount = await h.expect("/ledger/accounts", owner.token, { code: `INV-${h.suffix.slice(0, 16)}`, name: "DEV TEST Company Inventory", kind: "Asset" }, 201);
+      assert.equal(stockAccount.kind, "Asset"); assert.equal(stockAccount.active, true); assert.equal(stockAccount.name, "DEV TEST Company Inventory");
+      const expenseAccount = await h.expect("/ledger/accounts", owner.token, { code: `EXP-${h.suffix.slice(0, 16)}`, name: "DEV TEST Operating Expense", kind: "Expense" }, 201);
+      const beforeInvalid = (await tx.select().from(ledgerAccounts)).length;
+      await h.expect("/ledger/configurations/starter", owner.token, { ...starter, selections: [{ key: "Inventory", accountId: expenseAccount.id }] }, 422);
+      assert.equal((await tx.select().from(ledgerAccounts)).length, beforeInvalid);
+      const configuration = await h.expect("/ledger/configurations/starter", owner.token, { ...starter, selections: [{ key: "Inventory", accountId: stockAccount.id }] }, 201);
       const [draft] = await tx.select().from(ledgerConfigurations).where(eq(ledgerConfigurations.id, configuration.id));
       assert.equal(draft.state, "Draft"); assert.equal(draft.approvedBy, null);
+      assert.equal(draft.data.mappings.find(m => m.role === "Inventory")?.accountId, stockAccount.id);
       const chartCount = (await tx.select().from(ledgerAccounts)).length;
       await h.expect("/ledger/configurations/starter", owner.token, starter, 409);
       assert.equal((await tx.select().from(ledgerAccounts)).length, chartCount);
@@ -69,6 +77,22 @@ test("hosted guidance: saved confirmations, safe starter draft, owner approval a
       assert.equal((await h.expect(`/imports/${record.id}`, owner.token)).status, "Received");
       const totals = (await tx.execute<{ value: string; debit: string; credit: string }>(sql`select (select sum(received_value_bdt)::text from erp_private.stock_batches where source_import_id=${record.id}) value,(select sum(l.debit)::text from erp_private.ledger_lines l join erp_private.ledger_journals j on j.id=l.journal_id where j.source_key in(select 'stock:'||m.id from erp_private.stock_movements m join erp_private.stock_batches b on b.id=m.batch_id where b.source_import_id=${record.id})) debit,(select sum(l.credit)::text from erp_private.ledger_lines l join erp_private.ledger_journals j on j.id=l.journal_id where j.source_key in(select 'stock:'||m.id from erp_private.stock_movements m join erp_private.stock_batches b on b.id=m.batch_id where b.source_import_id=${record.id})) credit`)).rows[0];
       assert.equal(totals.value, "14400.00"); assert.equal(totals.debit, totals.value); assert.equal(totals.credit, totals.value);
+      await h.expect(`/imports/${record.id}/transition`, owner.token, { status: "Closed" });
+      const closed = await h.expect(`/imports/${record.id}`, owner.token);
+      const receiptsBefore = await h.expect(`/imports/${record.id}/receipts`, owner.token);
+      const postedState = async () => (await tx.execute(sql`select (select count(*) from erp_private.stock_movements) movements,(select count(*) from erp_private.ledger_journals) journals,(select count(*) from erp_private.ledger_lines) lines,(select count(*) from erp_private.account_transactions) cash`)).rows;
+      const before = await postedState();
+      await h.expect(`/imports/${record.id}/reopen-case`, warehouse.token, {}, 403);
+      await h.expect(`/imports/${record.id}/reopen-case`, owner.token, { status: "Draft" }, 422);
+      const reopened = await h.expect(`/imports/${record.id}/reopen-case`, owner.token, {});
+      assert.equal(reopened.status, "Received"); assert.equal(reopened.warehouseStatus, "Received");
+      assert.deepEqual(reopened.snapshot, closed.snapshot); assert.deepEqual(reopened.items, closed.items); assert.deepEqual(reopened.costs, closed.costs);
+      assert.deepEqual(await h.expect(`/imports/${record.id}/receipts`, owner.token), receiptsBefore);
+      assert.deepEqual(await postedState(), before);
+      await h.expect(`/imports/${record.id}/reopen-case`, owner.token, {}, 409);
+      await h.expect(`/imports/${record.id}/reopen`, owner.token, { reason: "Cannot unlock receipt-backed costing" }, 409);
+      const events = (await tx.execute(sql`select action,details from erp_private.audit_events where entity_id=${record.id} and action='Import case reopened'`)).rows;
+      assert.equal(events.length, 1); assert.equal((events[0].details as { stockChanged: boolean }).stockChanged, false);
       await h.expect(`/imports/${record.id}/transition`, owner.token, { status: "Closed" });
       throw rollback;
     }); } catch (error) { if (error !== rollback) throw error; }

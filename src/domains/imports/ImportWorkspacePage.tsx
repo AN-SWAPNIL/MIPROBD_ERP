@@ -30,6 +30,7 @@ import { Decimal as DecimalJs } from "decimal.js";
 import { useNavigate, useParams } from "react-router-dom";
 import { foundationMode, workspacePath } from "../../lib/runtime";
 import { operationalService } from "../settings/operationalService";
+import LedgerSetupDialog from "../ledger/LedgerSetupDialog";
 import { CommercialEditor, ShipmentEditor, ItemEditor, ImportLogisticsSummary } from "./ImportEditors";
 import { decimalPreview, isDecimalInput } from "../../lib/decimalInput";
 import OptionSelect from "../masters/OptionSelect";
@@ -96,6 +97,8 @@ export default function ImportWorkspacePage() {
   const [deleteItem, setDeleteItem] = useState<ImportItem | null>(null);
   const [deleteCost, setDeleteCost] = useState<ImportCostLine | null>(null);
   const [pendingTransition, setPendingTransition] = useState<"Cancelled" | "Closed" | null>(null);
+  const [reopeningCase, setReopeningCase] = useState(false);
+  const [accountingSetupOpen, setAccountingSetupOpen] = useState(false);
   const [preview, setPreview] = useState<LandedCostPreview | null>(null);
   const [viewingDocument, setViewingDocument] = useState<DocumentRecord | null>(null);
   const [extraction, setExtraction] = useState<AIDocumentExtraction | null>(null);
@@ -130,6 +133,7 @@ export default function ImportWorkspacePage() {
       setEditingItem(undefined);
       setEditingCost(undefined);
       setPendingTransition(null);
+      setReopeningCase(false);
       setPreview(null);
       setExtraction(null);
       pushToast({ kind: "success", title: task.success });
@@ -166,7 +170,6 @@ export default function ImportWorkspacePage() {
   const canCancel = canEdit && ["Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port", "Costing"].includes(record.status);
   const mayMark = (index: number) => index < 7 ? canEdit : index === 7 ? canFinalize : index === 8 ? hasEffectivePermission(session?.user, "inventory", "post") && !terminal : hasEffectivePermission(session?.user, "import", "edit") && !terminal;
   const blockers = (index: number) => [...workflow.steps[index].reasons, ...(index === 7 && !result ? ["Generate and review the landed-cost preview before finalizing."] : []), ...(index === 8 && receiptsQuery.isError ? ["Reload warehouse receipt history before posting."] : [])];
-  const setupUrl = `/backend/accounts/ledger?view=mapping&returnTo=${encodeURIComponent(`/backend/imports/${record.id}`)}`;
   const markStep = (index: number) => {
     setSelectedStage(index);
     if (index < 3) return action.mutate({ run: () => importService.confirmStep(record.id, index), success: `${importSteps[index]} confirmed`, stage: null });
@@ -224,6 +227,7 @@ export default function ImportWorkspacePage() {
             {!terminal && hasEffectivePermission(session?.user, "import", "edit") ? <Button icon={<Paperclip className="h-4 w-4" />} onClick={() => { action.reset(); setSelectedStage(5); setModal("document"); }}>Attach Document</Button> : null}
             {foundationMode ? <Button icon={<Warehouse className="h-4 w-4" />} onClick={()=>navigate(`/backend/supplier-claims?import=${encodeURIComponent(record.id)}`)}>Supplier Claims</Button> : null}
             {canCancel ? <Button variant="danger" icon={<CircleX className="h-4 w-4" />} disabled={action.isPending} onClick={() => setPendingTransition("Cancelled")}>Cancel Case</Button> : null}
+            {record.status === "Closed" && hasEffectivePermission(session?.user, "import", "edit") ? <Button icon={<RotateCcw className="h-4 w-4" />} disabled={action.isPending} onClick={() => { action.reset(); setReopeningCase(true); }}>Reopen Case</Button> : null}
             {canSeeCost && (foundationMode ? record.snapshot : result) && hasEffectivePermission(session?.user, "print", "view") ? <Button icon={<Printer className="h-4 w-4" />} onClick={() => navigate("/app/print/import-cost/" + record.id)}>Print Cost</Button> : null}
             <StatusBadge status={record.status} />
           </>
@@ -235,7 +239,7 @@ export default function ImportWorkspacePage() {
       {locked ? (
         <div className="flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
-          <p><strong>Finalized landed cost{record.snapshot ? ` v${record.snapshot.version}` : ""}.</strong> Commercial, product and cost values are locked. Reopening requires owner permission, a reason and an audit entry.</p>
+          <p><strong>Finalized landed cost{record.snapshot ? ` v${record.snapshot.version}` : ""}.</strong> Commercial, product and cost values are locked. Reopening costing requires owner permission, a reason and an audit entry. Reopening a closed case does not unlock these values.</p>
         </div>
       ) : null}
       {locked && receipts.length ? <div className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900"><Warehouse className="mt-0.5 h-4 w-4 shrink-0" /><p><strong>Receipt-backed valuation is protected.</strong> This snapshot cannot be reopened because warehouse stock already inherited it. A future formal valuation adjustment must preserve sold and remaining stock history.</p></div> : null}
@@ -429,7 +433,7 @@ export default function ImportWorkspacePage() {
         {record.costingStatus !== "Finalized" ? <div className="flex items-start gap-3 bg-amber-50 p-4 text-sm text-amber-900"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" /><p>Warehouse receiving remains locked until the authorized owner finalizes landed cost.</p></div> : null}
         {canReceive && receivingReadiness.isPending ? <LoadingBlock label="Checking accounting setup" /> : null}
         {canReceive && receivingReadiness.isError ? <ErrorBlock error={receivingReadiness.error} onRetry={() => void receivingReadiness.refetch()} /> : null}
-        {canReceive && receivingReadiness.data && !receivingReadiness.data.ready ? <AccountingSetupNotice message={receivingReadiness.data.message} canConfigure={receivingReadiness.data.canConfigure} onSetup={() => navigate(setupUrl)} /> : null}
+        {canReceive && receivingReadiness.data && !receivingReadiness.data.ready ? <AccountingSetupNotice message={receivingReadiness.data.message} canConfigure={receivingReadiness.data.canConfigure} onSetup={() => setAccountingSetupOpen(true)} /> : null}
         {receiptsQuery.isError ? <ErrorBlock error={receiptsQuery.error} onRetry={() => void receiptsQuery.refetch()} /> : null}
         <div className="grid gap-3 p-4">
           {receipts.map((receipt) => (
@@ -463,7 +467,8 @@ export default function ImportWorkspacePage() {
       {modal === "item" ? <Modal open title={editingItem ? "Edit imported product" : "Add imported product"} subtitle="Choose a product variant and enter its FOB, quantity and CBM basis." onClose={() => { setModal(null); setEditingItem(undefined); }} width="max-w-3xl"><ItemEditor error={action.error} record={record} products={products} item={editingItem} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingItem ? importService.updateItem(record.id, editingItem.id, payload) : importService.addItem(record.id, payload), success: editingItem ? "Product line updated" : "Product line added" })} /></Modal> : null}
       {modal === "cost" ? <Modal open title={editingCost ? "Edit cost row" : "Add import cost"} subtitle="Every common or transport cost requires an explicit allocation decision." onClose={() => { setModal(null); setEditingCost(undefined); }} width="max-w-4xl">{action.isError ? <ErrorBlock error={action.error} title="Cost row could not be saved" /> : null}<CostEditor record={record} cost={editingCost} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingCost ? importService.updateCost(record.id, editingCost.id, payload) : importService.addCost(record.id, payload), success: editingCost ? "Cost row updated" : "Cost row added" })} /></Modal> : null}
       {modal === "document" ? <Modal open title="Attach import document" subtitle="Attach a PDF, image, spreadsheet or document to this import." onClose={() => setModal(null)}>{action.isError ? <ErrorBlock error={action.error} title="Document could not be attached" /> : null}<DocumentEditor busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => importService.addDocument(record.id, payload), success: "Document attached and ready to view" })} /></Modal> : null}
-      {modal === "receive" ? <Modal open title="Receive to warehouse" subtitle="Product and finalized cost are inherited. Enter batch traceability and accepted/rejected quantities." onClose={() => setModal(null)} width="max-w-5xl">{action.isError ? <ErrorBlock error={action.error} title="Receipt could not be posted" /> : null}{receivingReadiness.isError ? <ErrorBlock error={receivingReadiness.error} onRetry={() => void receivingReadiness.refetch()} /> : receivingReadiness.data?.ready ? <ReceiptEditor record={record} receipts={receipts} busy={action.isPending} onSubmit={payload => action.mutate({ run: () => importService.receive(record.id, payload), success: "Warehouse receipt posted and stock batches created", stage: null })} /> : receivingReadiness.data ? <AccountingSetupNotice message={receivingReadiness.data.message} canConfigure={receivingReadiness.data.canConfigure} onSetup={() => { setModal(null); navigate(setupUrl); }} /> : <LoadingBlock label="Checking posting prerequisites" />}</Modal> : null}
+      {modal === "receive" ? <Modal open title="Receive to warehouse" subtitle="Product and finalized cost are inherited. Enter batch traceability and accepted/rejected quantities." onClose={() => setModal(null)} width="max-w-5xl">{action.isError ? <ErrorBlock error={action.error} title="Receipt could not be posted" /> : null}{receivingReadiness.isError ? <ErrorBlock error={receivingReadiness.error} onRetry={() => void receivingReadiness.refetch()} /> : receivingReadiness.data?.ready ? <ReceiptEditor record={record} receipts={receipts} busy={action.isPending} onSubmit={payload => action.mutate({ run: () => importService.receive(record.id, payload), success: "Warehouse receipt posted and stock batches created", stage: null })} /> : receivingReadiness.data ? <AccountingSetupNotice message={receivingReadiness.data.message} canConfigure={receivingReadiness.data.canConfigure} onSetup={() => { setModal(null); setAccountingSetupOpen(true); }} /> : <LoadingBlock label="Checking posting prerequisites" />}</Modal> : null}
+      {accountingSetupOpen ? <LedgerSetupDialog onClose={() => setAccountingSetupOpen(false)} /> : null}
       {modal === "reopen" ? <ReopenModal busy={action.isPending} onClose={() => setModal(null)} onSubmit={(reason) => action.mutate({ run: () => importService.reopen(record.id, reason), success: "Landed cost reopened with an audit reason" })} /> : null}
       {extraction ? <Modal open title="AI Extracted Fields" subtitle={`${extraction.documentName} | review required; nothing is overwritten automatically.`} onClose={() => setExtraction(null)} width="max-w-3xl"><AIDocumentExtractReview extraction={extraction} busy={action.isPending} onApply={applyExtractedFields} /></Modal> : null}
       <DocumentViewer document={viewingDocument} onClose={() => setViewingDocument(null)} />
@@ -471,6 +476,7 @@ export default function ImportWorkspacePage() {
       <ConfirmDialog open={Boolean(deleteItem)} title="Remove product line?" message={foundationMode ? "Remove any costs scoped to this item first. Product removal is allowed only before landed-cost finalization." : "Any cost scoped to this product will also be removed. This is allowed only before landed-cost finalization."} confirmLabel="Remove product" onCancel={() => setDeleteItem(null)} onConfirm={() => deleteItem && action.mutate({ run: () => importService.removeItem(record.id, deleteItem.id), success: "Product line removed" })} />
       <ConfirmDialog open={Boolean(deleteCost)} title="Remove cost row?" message="The next landed-cost preview will be recalculated without this cost." confirmLabel="Remove cost" onCancel={() => setDeleteCost(null)} onConfirm={() => deleteCost && action.mutate({ run: () => importService.removeCost(record.id, deleteCost.id), success: "Cost row removed" })} />
       <ConfirmDialog open={Boolean(pendingTransition)} title={pendingTransition === "Closed" ? "Close this import case?" : "Cancel this import case?"} message={pendingTransition === "Closed" ? "The shipment is fully received. Closing removes it from active work while preserving every commercial, cost, receipt and stock record." : "Cancellation makes this unfinalized case read-only. It can still be audited or deleted from the register."} confirmLabel={pendingTransition === "Closed" ? "Close case" : "Cancel case"} onCancel={() => setPendingTransition(null)} onConfirm={() => pendingTransition && action.mutate({ run: () => importService.transition(record.id, pendingTransition), success: pendingTransition === "Closed" ? "Import case closed" : "Import case cancelled" })} />
+      {reopeningCase ? <Modal open title="Reopen this import case?" onClose={() => { if (!action.isPending) setReopeningCase(false); }}><p className="text-sm leading-6 text-slate-700">Return this case to Received for follow-up. Existing receipts, stock, payments and finalized landed cost stay unchanged. Posted values remain protected.</p>{action.isError ? <ErrorBlock error={action.error} title="Case could not be reopened" /> : null}<div className="mt-4 flex justify-end"><Button variant="primary" icon={<RotateCcw className="h-4 w-4" />} disabled={action.isPending} onClick={() => action.mutate({ run: () => importService.reopenCase(record.id), success: "Import case reopened. Posted stock and costs are unchanged.", stage: 9 })}>Reopen Case</Button></div></Modal> : null}
     </>
   );
 }
@@ -478,7 +484,7 @@ export default function ImportWorkspacePage() {
 
 
 function AccountingSetupNotice({ message, canConfigure, onSetup }: { message: string; canConfigure: boolean; onSetup: () => void }) {
-  return <div role="status" className="border-l-4 border-amber-500 bg-amber-50 p-4 text-sm text-amber-950"><strong>Accounting setup required</strong><p className="mt-1">{message}</p>{canConfigure ? <Button className="mt-3" variant="primary" icon={<Banknote className="h-4 w-4" />} onClick={onSetup}>Set Up Accounting</Button> : <p className="mt-2 text-xs">Contact your Super Admin to approve the company posting mapping.</p>}</div>;
+  return <div role="status" className="border-l-4 border-amber-500 bg-amber-50 p-4 text-sm text-amber-950"><strong>Company accounting setup is not finished</strong><p className="mt-1">{message}</p>{canConfigure ? <Button className="mt-3" variant="primary" icon={<Banknote className="h-4 w-4" />} onClick={onSetup}>Set Up Accounting</Button> : <p className="mt-2 text-xs">Contact your Super Admin. Warehouse staff do not need to choose accounting accounts.</p>}</div>;
 }
 
 function CostEditor({ record, cost, busy, onSubmit }: { record: ImportCase; cost?: ImportCostLine; busy: boolean; onSubmit: (payload: Omit<ImportCostLine, "id" | "enteredBy" | "createdAt"> & { attachmentUpload?: DocumentUpload }) => void }) {

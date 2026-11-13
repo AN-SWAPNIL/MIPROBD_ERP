@@ -204,6 +204,7 @@ export const importService = {
   preview: (id: string) => post<LandedCostPreview>("/api/imports/" + id + "/cost-preview", {}, LandedCostPreviewSchema),
   finalize: (id: string) => post<ImportCase>("/api/imports/" + id + "/finalize", {}, ImportCaseSchema),
   reopen: (id: string, reason: string) => post<ImportCase>("/api/imports/" + id + "/reopen", { reason }, ImportCaseSchema),
+  reopenCase: (id: string) => post<ImportCase>(`/api/imports/${id}/reopen-case`, {}, ImportCaseSchema),
   receive: (id: string, payload: Omit<WarehouseReceipt, "id" | "importId" | "reference" | "status" | "receivedBy">) => post<WarehouseReceipt>("/api/imports/" + id + "/receive", payload, WarehouseReceiptSchema)
 };
 

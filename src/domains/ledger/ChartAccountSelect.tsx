@@ -10,8 +10,8 @@ import { canManageLedger } from "./access";
 import { ledgerAccountInput, ledgerAccountKinds, ledgerAccountSchema } from "./contracts";
 
 type ChartAccount = z.infer<typeof ledgerAccountSchema>;
-export default function ChartAccountSelect({ chart, label, value, defaultValue = "", onChange, name, kind, disabled = false }: {
-  chart: ChartAccount[]; label: string; value?: string; defaultValue?: string; onChange?: (id: string) => void; name?: string; kind?: ChartAccount["kind"]; disabled?: boolean;
+export default function ChartAccountSelect({ chart, label, value, defaultValue = "", onChange, name, kind, disabled = false, required = true, emptyLabel = "Select chart account" }: {
+  chart: ChartAccount[]; label: string; value?: string; defaultValue?: string; onChange?: (id: string) => void; name?: string; kind?: ChartAccount["kind"]; disabled?: boolean; required?: boolean; emptyLabel?: string;
 }) {
   const user = useAuthStore((s) => s.session?.user); const client = useQueryClient();
   const [selected, setSelected] = useState(defaultValue); const [created, setCreated] = useState<ChartAccount[]>([]); const [adding, setAdding] = useState(false);
@@ -21,8 +21,8 @@ export default function ChartAccountSelect({ chart, label, value, defaultValue =
   const save = useMutation({ mutationFn: async (data: unknown) => ledgerAccountSchema.parse(await controlRequest("/ledger/accounts", ledgerAccountInput.parse(data))), onSuccess: async (row) => {
     setCreated((old) => [...old, row]); choose(row.id); setAdding(false); await client.invalidateQueries({ queryKey: ["ledger", "chart"] });
   } });
-  return <div className="min-w-0" data-required={!disabled ? "true" : undefined}><select aria-label={label} name={name} className={inputClass} value={current} required disabled={disabled} onChange={(e) => { if (e.target.value === "__add_chart__") { save.reset(); setAdding(true); } else choose(e.target.value); }}>
-    <option value="">Select chart account</option>{rows.map((row) => <option key={row.id} value={row.id}>{row.code} | {row.name}</option>)}
+  return <div className="min-w-0" data-required={required && !disabled ? "true" : undefined}><select aria-label={label} name={name} className={inputClass} value={current} required={required} disabled={disabled} onChange={(e) => { if (e.target.value === "__add_chart__") { save.reset(); setAdding(true); } else choose(e.target.value); }}>
+    <option value="">{emptyLabel}</option>{rows.map((row) => <option key={row.id} value={row.id}>{row.code} | {row.name}</option>)}
     {canManageLedger(user) && !disabled ? <option value="__add_chart__">+ Add chart account...</option> : null}
   </select>{adding ? <Modal open title="Add chart account" onClose={() => { if (!save.isPending) setAdding(false); }}>
     <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); const form = new FormData(e.currentTarget); save.mutate({ code: form.get("code"), name: form.get("accountName"), kind: kind ?? form.get("kind") }); }}>

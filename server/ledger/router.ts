@@ -54,7 +54,7 @@ export function createLedgerRouter(ctx: Context) {
       const id = newId("gl-account"); await tx.insert(ledgerAccounts).values({ ...input, id, createdBy: user.id });
       await audit(tx, user.id, "Chart account created", "Ledger Account", id, { code: input.code, kind: input.kind }); return id;
     });
-    res.status(201).json({ success: true, data: { id }, message: "Chart account created without an opening balance" });
+    res.status(201).json({ success: true, data: { ...input, id, active: true }, message: "Chart account created without an opening balance" });
   });
   for (const action of ["archive", "activate"] as const) router.post(`/ledger/accounts/:id/${action}`, async (req, res) => {
     z.object({}).strict().parse(req.body); const actor = identity(res);

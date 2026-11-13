@@ -39,3 +39,12 @@ test("confirmations bind the saved PO, PI and payment facts; later edits invalid
   assert.notEqual(importConfirmationSource(before, 2), importConfirmationSource(priced, 2));
   for (const status of ["Closed", "Cancelled"] as const) assert.ok(importWorkflow(record({ status })).steps.every(s => s.reasons.includes("This case is read-only.")));
 });
+test("reopening a closed case returns only closure to pending, not costing or receiving", () => {
+  const closed = record({ status: "Closed", costingStatus: "Finalized", warehouseStatus: "Received", confirmedSteps: [0, 1, 2] });
+  const reopened = { ...closed, status: "Received" as const, milestone: "Received" as const };
+  assert.ok(importWorkflow(closed).steps.every(step => step.completed));
+  const flow = importWorkflow(reopened);
+  assert.equal(flow.currentStep, 9); assert.ok(flow.steps.slice(0, 9).every(step => step.completed));
+  assert.equal(flow.steps[9].completed, false); assert.deepEqual(flow.steps[9].reasons, []);
+  assert.equal(reopened.costingStatus, "Finalized"); assert.equal(reopened.warehouseStatus, "Received");
+});

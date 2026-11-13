@@ -73,7 +73,7 @@ export function createInventoryRouter(ctx: Context) {
       const [configuration] = await tx.select({ id: ledgerConfigurations.id }).from(ledgerConfigurations).where(eq(ledgerConfigurations.state, "Approved")).limit(1);
       const strict = process.env.NODE_ENV === "production" || process.env.ERP_REQUIRE_LEDGER_CONFIGURATION === "true";
       const ready = !strict || Boolean(configuration);
-      return { ready, canConfigure: user.role === "Super Admin" && hasEffectivePermission(user, "settings", "approve"), message: ready ? "Accounting posting is configured." : "Accounting setup is incomplete. Super Admin must review and approve the posting mapping before warehouse stock can be posted." };
+      return { ready, canConfigure: user.role === "Super Admin" && hasEffectivePermission(user, "settings", "approve"), message: ready ? "Company accounting setup is approved." : "Super Admin must finish the company accounting setup in Expenses & Accounts > General Ledger > Accounting Setup. This is a company-wide prerequisite, not a setting for each warehouse receipt." };
     }, { accessMode: "read only", isolationLevel: "repeatable read" });
     res.json({ success: true, data, message: "Warehouse posting prerequisites checked" });
   });

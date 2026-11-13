@@ -45,7 +45,7 @@ export async function postLedgerEvent(tx: Transaction, user: User, id: string) {
   if (event.state !== "Deferred") return event.journalId;
   const [config] = await tx.select().from(ledgerConfigurations).where(eq(ledgerConfigurations.state, "Approved"));
   if (!config) {
-    if (process.env.NODE_ENV === "production" || process.env.ERP_REQUIRE_LEDGER_CONFIGURATION === "true") throw new HttpError(409, "Operational posting requires an approved general-ledger configuration in this environment.");
+    if (process.env.NODE_ENV === "production" || process.env.ERP_REQUIRE_LEDGER_CONFIGURATION === "true") throw new HttpError(409, "Company accounting setup is not approved yet. Ask Super Admin to finish Expenses & Accounts > General Ledger > Accounting Setup before recording stock or payments.");
     return null;
   }
   if (event.date < config.data.effectiveFrom) {
@@ -55,7 +55,7 @@ export async function postLedgerEvent(tx: Transaction, user: User, id: string) {
   if (!event.plan.length) throw new HttpError(409, "This historical or ambiguous source needs a separately approved journal; it cannot be automatically inferred.");
   const lines = event.plan.map((line): LedgerLineInput => {
     const accountId = line.role === "Cash" ? config.data.cashMappings.find((m) => m.cashAccountId === line.cashAccountId)?.accountId : config.data.mappings.find((m) => m.role === line.role)?.accountId;
-    if (!accountId) throw new HttpError(409, "The approved ledger configuration lacks this source's account mapping.");
+    if (!accountId) throw new HttpError(409, "Company accounting setup does not include the account needed for this transaction. Ask Super Admin to review Accounting Setup. Nothing has been recorded.");
     return { accountId, debit: line.debit, credit: line.credit, note: line.note ?? "" };
   });
   const journalId = await insertJournal(tx, user, { date: event.date, reference: event.reference, description: event.description, type: "Automatic", proofReference: event.sourceKey, sourceKey: event.sourceKey, configurationId: config.id, confidential: event.confidential, posted: true, lines });

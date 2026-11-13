@@ -15,11 +15,11 @@ export async function draftStarterLedger(tx: Transaction, user: User, body: unkn
   if (input.effectiveFrom > businessDate()) throw new HttpError(422, "The accounting start date cannot be in the future.");
   await lockLedger(tx);
   const existing = await tx.select().from(ledgerConfigurations).limit(1);
-  if (existing.length) throw new HttpError(409, "A posting configuration already exists. Review its draft or use New Mapping; the starter will not replace it.");
+  if (existing.length) throw new HttpError(409, "Company accounting setup already exists. Review its draft or use New Setup Version; the starter will not replace it.");
   const chart = await tx.select().from(ledgerAccounts);
   const cash = await tx.select({ id: cashAccounts.id, name: cashAccounts.name, active: cashAccounts.active }).from(cashAccounts);
   let proposal;
-  try { proposal = ledgerStarterProposal(chart, cash); } catch (error) { throw new HttpError(409, (error as Error).message); }
+  try { proposal = ledgerStarterProposal(chart, cash, input.selections); } catch (error) { throw new HttpError(422, (error as Error).message); }
   const rows = [];
   for (const account of proposal) {
     const id = account.existingId ?? newId("gl-account");
