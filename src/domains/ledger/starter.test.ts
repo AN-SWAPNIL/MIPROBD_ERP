@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ledgerMappingRoles, ledgerRoleKind } from "./contracts.js";
-import { ledgerStarterInput, ledgerStarterProposal } from "./starter.js";
+import { ledgerSetupReviewIssues, ledgerStarterInput, ledgerStarterProposal } from "./starter.js";
 
 test("starter proposes separate control/equity accounts and maps only real active payment masters", () => {
   const rows = ledgerStarterProposal([], [{ id: "b", name: "Bank", active: true }, { id: "a", name: "Cash", active: true }, { id: "closed", name: "Closed", active: false }]);
@@ -22,4 +22,28 @@ test("starter requires an explicit review acknowledgment and cannot accept balan
   const input = { effectiveFrom: "2026-11-13", proofReference: "Owner review", acknowledgeDraft: true };
   assert.equal(ledgerStarterInput.safeParse(input).success, true);
   for (const body of [{ ...input, acknowledgeDraft: false }, { ...input, state: "Approved" }, { ...input, balance: "1000" }]) assert.equal(ledgerStarterInput.safeParse(body).success, false);
+});
+test("starter allows explicit existing accounts without overwriting their code or company name", () => {
+  const existing = { id: "stock", code: "INV-01", name: "Company Medical Stock", kind: "Asset" as const, active: true };
+  const rows = ledgerStarterProposal([existing], [], [{ key: "Inventory", accountId: existing.id }]);
+  assert.equal(rows[0].existingId, existing.id); assert.equal(rows[0].name, existing.name); assert.equal(rows[0].code, existing.code);
+  const collision = { ...existing, code: "1100" };
+  assert.throws(() => ledgerStarterProposal([collision], []), /another purpose/);
+  assert.equal(ledgerStarterProposal([collision], [], [{ key: "Inventory", accountId: collision.id }])[0].existingId, collision.id);
+});
+test("starter rejects unknown, inactive, wrong-type, duplicate and cross-purpose account choices", () => {
+  const asset = { id: "asset", code: "A-1", name: "Existing Asset", kind: "Asset" as const, active: true };
+  for (const chart of [[], [{ ...asset, active: false }], [{ ...asset, kind: "Expense" as const }]]) assert.throws(() => ledgerStarterProposal(chart, [], [{ key: "Inventory", accountId: asset.id }]), /active Asset/);
+  assert.throws(() => ledgerStarterProposal([asset], [], [{ key: "cash:invented", accountId: asset.id }]), /actual setup purposes/);
+  assert.throws(() => ledgerStarterProposal([asset], [], [{ key: "Inventory", accountId: asset.id }, { key: "Inventory Clearing", accountId: asset.id }]), /separate ledger account/);
+  assert.throws(() => ledgerStarterProposal([asset], [{ id: "bank", name: "Bank", active: true }], [{ key: "Inventory", accountId: asset.id }, { key: "cash:bank", accountId: asset.id }]), /separate ledger account/);
+  assert.equal(ledgerStarterInput.safeParse({ effectiveFrom: "2026-11-13", proofReference: "Reviewed", acknowledgeDraft: true, selections: [{ key: "Inventory", accountId: "asset" }, { key: "Inventory", accountId: "asset" }] }).success, false);
+});
+test("review blocks incomplete payment assignments, unavailable chart accounts and wrong control types", () => {
+  const proposal = ledgerStarterProposal([], []), chart = proposal.map(a => ({ id: a.code, code: a.code, name: a.name, kind: a.kind, active: true }));
+  const data = { effectiveFrom: "2026-11-13", proofReference: "Reviewed", mappings: proposal.flatMap(a => a.role ? [{ role: a.role, accountId: a.code }] : []), cashMappings: [] as { cashAccountId: string; accountId: string }[] };
+  assert.deepEqual(ledgerSetupReviewIssues(data, chart, []), []);
+  assert.ok(ledgerSetupReviewIssues(data, chart, [{ id: "bank", name: "Real Bank", active: true }]).some(s => s.includes("Real Bank")));
+  assert.ok(ledgerSetupReviewIssues(data, chart.map(a => a.code === "1100" ? { ...a, active: false } : a), []).some(s => s.includes("Inventory")));
+  assert.ok(ledgerSetupReviewIssues({ ...data, cashMappings: [{ cashAccountId: "bank", accountId: "1100" }] }, chart, [{ id: "bank", name: "Real Bank", active: true }]).some(s => s.includes("separate")));
 });

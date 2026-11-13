@@ -396,17 +396,17 @@ PO, PI and LC/TT confirmations are saved against the current record facts. Editi
    Receive to Warehouse unlocks after finalization and accounting setup. The form identifies missing traceability, invalid dates and excess quantities before posting. Partial receipts stay on Receiving; the final receipt advances to Activity & Closure.
 
 10. **Activity & Closure**
-    Completion summary and events derived from saved creation, visible attachments, authorized snapshot history and posted receipts. This is not another receiving form or a replacement for the audit report. View Warehouse Receipts returns to Receiving; Close Case is available when fully received.
+    Completion summary and events derived from saved creation, visible attachments, authorized snapshot history and posted receipts. This is not another receiving form or a replacement for the audit report. View Warehouse Receipts returns to Receiving; Close Case is available when fully received. For a Closed case, authorized Import editors can select Reopen Case in the header to return it to Received for follow-up. The audit records reopening, but stock, receipts, payments and finalized costs do not change. This does not unlock costing.
 
 ### First-time accounting setup
 
-Super Admin has permission to prepare and approve accounting configuration. Missing configuration is not an access denial: stock needs Inventory and Inventory Clearing ledger accounts before its value can be posted.
+Super Admin has permission to prepare and approve company accounting setup. This is a company-wide accounting prerequisite, not a warehouse task repeated on each receipt. Update 13 explicitly requests automatic General Ledger entries; assigning business transactions to ledger accounts is the implementation behind that requirement. For example, receiving goods increases Inventory and uses Inventory Clearing as its counterpart. Missing setup is not an access denial.
 
-1. From Receiving, click **Set Up Accounting**, or open **Expenses & Accounts -> General Ledger -> Posting Mapping**.
-2. Click **Starter Setup**. Review the proposed control/equity accounts and mappings to any existing payment accounts; choose the company's accounting start date and enter a setup reference.
+1. From Receiving, click **Set Up Accounting**. A dialog opens without leaving the import page. The same company configuration is also available under **Expenses & Accounts -> General Ledger -> Accounting Setup**.
+2. Click **Starter Setup**. Each account purpose has an explanation and a selector: keep the suggested template, choose a suitable existing account, or use **+ Add chart account**. Actual cash/bank masters remain separate; the template does not create fictitious payment accounts. Choose the company's accounting start date and enter a setup reference.
 3. Acknowledge the proposal and **Save Starter Draft**. This creates no opening balances, transactions or approval.
-4. Review the saved mapping, click **Approve**, and record your decision reason. Super Admin may approve their own mapping; the action is audited.
-5. Click **Return to Import** and receive the goods. Any later error still rolls the whole receipt back; it never posts stock without its required ledger entry.
+4. Click **Review & Approve**. Inspect the actual saved account assignments, including cash/bank links, confirm them and the start date, enter an approval reason, then choose **Approve Company Setup**. Super Admin may approve their own setup; the action is audited. Invalid/incomplete assignments block approval.
+5. Click **Return to Import** to close the dialog on the same page, then receive the goods. Any later error still rolls the whole receipt back; it never posts stock without its required ledger entry. Company configuration is reused, not recreated per import.
 
 Starter Setup does not invent bank accounts, capital, customer dues or opening stock. Verified company settings and opening balances remain separate inputs. Other employees see a request to contact Super Admin rather than a configuration shortcut.
 

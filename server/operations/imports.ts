@@ -182,6 +182,17 @@ export function createImportRouter(ctx: Context) {
     res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Costing reopened; previous snapshot retained" });
   });
 
+  router.post("/imports/:id/reopen-case", async (req, res) => {
+    z.object({}).strict().parse(req.body);
+    await ctx.db.transaction(async tx => {
+      const user = await lockActor(tx, identity(res), "import", "edit");
+      const row = await lockImport(tx, String(req.params.id));
+      if (row.status !== "Closed") throw new HttpError(409, "Only a closed import case can be reopened. Its stock and finalized costs will remain unchanged.");
+      await tx.update(importCases).set({ status: "Received", updatedAt: new Date() }).where(eq(importCases.id, row.id));
+      await audit(tx, user.id, "Import case reopened", "Import", row.id, { from: "Closed", to: "Received", costingChanged: false, stockChanged: false });
+    });
+    res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Import case reopened for follow-up. Posted stock and costs are unchanged." });
+  });
   router.post("/imports/:id/transition", async (req, res) => {
     const { status } = transitionInput.parse(req.body);
     await ctx.db.transaction(async (tx) => {
