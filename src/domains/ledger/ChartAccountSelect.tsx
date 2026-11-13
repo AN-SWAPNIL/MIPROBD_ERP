@@ -28,7 +28,7 @@ export default function ChartAccountSelect({ chart, label, value, defaultValue =
     <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); const form = new FormData(e.currentTarget); save.mutate({ code: form.get("code"), name: form.get("accountName"), kind: kind ?? form.get("kind") }); }}>
       <label><span className={labelClass}>Account code</span><input className={inputClass} name="code" required maxLength={30} pattern="[A-Za-z0-9.-]+" /></label>
       <label><span className={labelClass}>Account name</span><input className={inputClass} name="accountName" required minLength={2} maxLength={120} /></label>
-      <label><span className={labelClass}>Account type</span><select aria-label="Account type" className={inputClass} name="kind" defaultValue={kind ?? "Asset"} required disabled={Boolean(kind)}>{ledgerAccountKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
+      {kind ? <div><span className={labelClass}>Account type</span><p className="py-2 text-sm font-semibold text-blue-950">{kind}</p></div> : <label><span className={labelClass}>Account type</span><select aria-label="Account type" className={inputClass} name="kind" defaultValue="Asset" required>{ledgerAccountKinds.map((value) => <option key={value}>{value}</option>)}</select></label>}
       {save.isError ? <ErrorBlock error={save.error} title="Chart account could not be saved" /> : null}
       <Button type="submit" variant="primary" disabled={save.isPending} icon={<Save className="h-4 w-4" />}>Save Account</Button>
     </form>

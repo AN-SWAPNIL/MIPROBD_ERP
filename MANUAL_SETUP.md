@@ -40,9 +40,17 @@ Choose **Review & Approve** to inspect the saved control and cash/bank assignmen
 
 Starter Setup does not invent company balances or cash/bank accounts. Confirm real company data separately. Do not disable the production posting guard to work around an unapproved mapping.
 
+Setup now has three stages: **Company details -> Account assignments -> Review draft**. Assignments are grouped into Stock & imports, Sales & customers, Suppliers, Expenses & funding, Employees & payroll, Cash & bank, and (for the starter chart) Owner's equity. Suggested accounts are proposals, not verified company policy. Back navigation preserves choices; saving a draft and approving it remain separate actions.
+
+A ledger account is a bookkeeping category, not necessarily a bank account. For example, **Inventory** records stock value; **Customer dues** records money customers owe. Each actual cash/bank account has its own separate Asset ledger assignment. After approval, existing assignments display with a lock instead of a disabled dropdown. New versions can add assignments, including new payment accounts; they cannot silently move historical balances to different accounts. A company-approved reclassification requires a reviewed migration, which is not an automatic setup-screen action.
+
+The usability review also tightened shared dialog scrolling, keyboard focus and mobile field widths; added account-code/name/type filtering in the chart; and added employee search to approval-policy authority selection. Sales invoice approvals, stock postings, payroll and approved accounting history remain protected financial actions, not retractable progress marks.
+
 Research basis: [ERPNext's chart importer](https://docs.frappe.io/erpnext/chart-of-accounts-importer) documents prefilled default charts, customization and review before import. Its [company accounting defaults](https://docs.frappe.io/erpnext/company-accounting-defaults) distinguish company-level account defaults from transaction-specific documents. MIPRO's starter is a general application template, not a Bangladesh tax-certified chart or approval of the company's actual account policy.
 
 ## Reopen A Closed Import
+
+Completion marks do not lock an unfinalized import. **Retract Completion** clears the selected step and later marks, preserving every field and attachment; finish those steps again after review. Supplier selection remains editable before cost finalization, including after production was marked. Production and shipment follow-up stay editable after receiving, but Closed/Cancelled cases are read-only. A finalized, unreceived cost can be reopened through the authorized costing action; received quantities and posted valuation still require source-linked stock/accounting corrections, not direct edits.
 
 Users with Import edit permission, including Super Admin, can open a Closed case and select **Reopen Case**, then confirm. It returns to Received for follow-up and supporting documents. Receipts, stock, payments and finalized costs stay unchanged; no extra receipt or accounting entry is created. The action is audited, and the case may be closed again. Reopening a case does not reopen costing or undo any posted transaction.
 

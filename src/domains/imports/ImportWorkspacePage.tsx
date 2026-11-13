@@ -98,6 +98,7 @@ export default function ImportWorkspacePage() {
   const [deleteCost, setDeleteCost] = useState<ImportCostLine | null>(null);
   const [pendingTransition, setPendingTransition] = useState<"Cancelled" | "Closed" | null>(null);
   const [reopeningCase, setReopeningCase] = useState(false);
+  const [retractingStep, setRetractingStep] = useState<number | null>(null);
   const [accountingSetupOpen, setAccountingSetupOpen] = useState(false);
   const [preview, setPreview] = useState<LandedCostPreview | null>(null);
   const [viewingDocument, setViewingDocument] = useState<DocumentRecord | null>(null);
@@ -134,6 +135,7 @@ export default function ImportWorkspacePage() {
       setEditingCost(undefined);
       setPendingTransition(null);
       setReopeningCase(false);
+      setRetractingStep(null);
       setPreview(null);
       setExtraction(null);
       pushToast({ kind: "success", title: task.success });
@@ -159,10 +161,11 @@ export default function ImportWorkspacePage() {
   const locked = record.costingStatus === "Finalized";
   const terminal = ["Closed", "Cancelled"].includes(record.status);
   const canEdit = hasEffectivePermission(session?.user, "import", "edit") && !locked && !terminal;
+  const canEditFollowUp = hasEffectivePermission(session?.user, "import", "edit") && !terminal;
   const canSeeCost = hasCapability(session?.user, "view_sensitive_cost");
   const canEditCost = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "edit_sensitive_cost") && !locked && !terminal;
   const canFinalize = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "finalize_landed_cost") && (!foundationMode || session?.user.role === "Super Admin") && !locked && !terminal;
-  const canReopen = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "reopen_landed_cost") && (!foundationMode || session?.user.role === "Super Admin") && locked && !receiptsQuery.isPending && !receiptsQuery.isError && receipts.length === 0;
+  const canReopen = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "reopen_landed_cost") && (!foundationMode || session?.user.role === "Super Admin") && locked && !terminal && !receiptsQuery.isPending && !receiptsQuery.isError && receipts.length === 0;
   const canReceive = hasEffectivePermission(session?.user, "inventory", "post") && record.costingStatus === "Finalized" && record.warehouseStatus !== "Received";
   const result = record.snapshot ?? preview;
   const workflow = importWorkflow(record, canSeeCost);
@@ -187,7 +190,7 @@ export default function ImportWorkspacePage() {
       {action.isError && !modal && stage === index ? <ErrorBlock error={action.error} title="Import action could not be completed" /> : null}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">{!entry.completed && reasons.length ? <ul className="list-inside list-disc text-xs leading-5 text-amber-900">{(stage === index || workflow.currentStep === index ? reasons : reasons.slice(0, 1)).map(reason => <li key={reason}>{reason}</li>)}</ul> : null}</div>
-        {entry.completed ? <Button disabled icon={<Check className="h-4 w-4" />}>Completed</Button> : mayMark(index) ? <Button variant="primary" icon={<Check className="h-4 w-4" />} disabled={action.isPending || reasons.length > 0 || index === 8 && (receiptsQuery.isPending || receivingReadiness.isPending || receivingReadiness.isError || !receivingReadiness.data?.ready)} onClick={() => markStep(index)}>{importStepActions[index]}</Button> : <span className="text-xs text-slate-600">{terminal || locked && index < 8 ? "Read-only section" : "Assigned role approval or posting authority required"}</span>}
+        {entry.completed ? <div className="flex flex-wrap items-center gap-2"><span className="flex items-center gap-1 text-xs font-semibold text-emerald-800"><Check className="h-4 w-4" />Completed</span>{canEdit && index < 7 ? <Button icon={<RotateCcw className="h-4 w-4" />} disabled={action.isPending} aria-label={`Retract ${importSteps[index]} completion`} onClick={() => { action.reset(); setRetractingStep(index); }}>Retract Completion</Button> : null}</div> : mayMark(index) ? <Button variant="primary" icon={<Check className="h-4 w-4" />} disabled={action.isPending || reasons.length > 0 || index === 8 && (receiptsQuery.isPending || receivingReadiness.isPending || receivingReadiness.isError || !receivingReadiness.data?.ready)} onClick={() => markStep(index)}>{importStepActions[index]}</Button> : <span className="text-xs text-slate-600">{terminal || locked && index < 8 ? "Read-only section" : "Assigned role approval or posting authority required"}</span>}
       </div>
     </div>;
   };
@@ -239,7 +242,7 @@ export default function ImportWorkspacePage() {
       {locked ? (
         <div className="flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
-          <p><strong>Finalized landed cost{record.snapshot ? ` v${record.snapshot.version}` : ""}.</strong> Commercial, product and cost values are locked. Reopening costing requires owner permission, a reason and an audit entry. Reopening a closed case does not unlock these values.</p>
+          <p><strong>Finalized landed cost{record.snapshot ? ` v${record.snapshot.version}` : ""}.</strong> Valuation fields, product quantities and costs are protected. Production and shipment follow-up remain editable until closure. Unreceived costing can be reopened with authority and a reason; posted stock requires a source-linked correction.</p>
         </div>
       ) : null}
       {locked && receipts.length ? <div className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900"><Warehouse className="mt-0.5 h-4 w-4 shrink-0" /><p><strong>Receipt-backed valuation is protected.</strong> This snapshot cannot be reopened because warehouse stock already inherited it. A future formal valuation adjustment must preserve sold and remaining stock history.</p></div> : null}
@@ -302,7 +305,7 @@ export default function ImportWorkspacePage() {
         </div>
       </SectionAccordion>
 
-      {[{ index: 2, title: "LC / TT", subtitle: "Payment reference and exchange-rate snapshot", edit: "Edit payment" }, { index: 3, title: "Production Follow-up", subtitle: "Supplier production status and target timing", edit: "Edit production" }, { index: 4, title: "Shipment", subtitle: "Commercial invoice, carrier and shipment dates", edit: "Edit shipment" }].map(section => <SectionAccordion key={section.index} {...sectionProps(section.index)} title={section.title} subtitle={section.subtitle} icon={Ship} actions={<div className="flex items-center">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingStage(section.index); setModal("shipment"); }} aria-label={section.edit} title={section.edit} /> : null}{backToSteps}</div>}>
+      {[{ index: 2, title: "LC / TT", subtitle: "Payment reference and exchange-rate snapshot", edit: "Edit payment" }, { index: 3, title: "Production Follow-up", subtitle: "Supplier production status and target timing", edit: "Edit production" }, { index: 4, title: "Shipment", subtitle: "Commercial invoice, carrier and shipment dates", edit: "Edit shipment" }].map(section => <SectionAccordion key={section.index} {...sectionProps(section.index)} title={section.title} subtitle={section.subtitle} icon={Ship} actions={<div className="flex items-center">{(section.index === 2 ? canEdit : canEditFollowUp) ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingStage(section.index); setModal("shipment"); }} aria-label={section.edit} title={section.edit} /> : null}{backToSteps}</div>}>
         <ImportLogisticsSummary record={record} stage={section.index} canSeeCost={canSeeCost} />
       </SectionAccordion>)}
 
@@ -469,6 +472,7 @@ export default function ImportWorkspacePage() {
       {modal === "document" ? <Modal open title="Attach import document" subtitle="Attach a PDF, image, spreadsheet or document to this import." onClose={() => setModal(null)}>{action.isError ? <ErrorBlock error={action.error} title="Document could not be attached" /> : null}<DocumentEditor busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => importService.addDocument(record.id, payload), success: "Document attached and ready to view" })} /></Modal> : null}
       {modal === "receive" ? <Modal open title="Receive to warehouse" subtitle="Product and finalized cost are inherited. Enter batch traceability and accepted/rejected quantities." onClose={() => setModal(null)} width="max-w-5xl">{action.isError ? <ErrorBlock error={action.error} title="Receipt could not be posted" /> : null}{receivingReadiness.isError ? <ErrorBlock error={receivingReadiness.error} onRetry={() => void receivingReadiness.refetch()} /> : receivingReadiness.data?.ready ? <ReceiptEditor record={record} receipts={receipts} busy={action.isPending} onSubmit={payload => action.mutate({ run: () => importService.receive(record.id, payload), success: "Warehouse receipt posted and stock batches created", stage: null })} /> : receivingReadiness.data ? <AccountingSetupNotice message={receivingReadiness.data.message} canConfigure={receivingReadiness.data.canConfigure} onSetup={() => { setModal(null); setAccountingSetupOpen(true); }} /> : <LoadingBlock label="Checking posting prerequisites" />}</Modal> : null}
       {accountingSetupOpen ? <LedgerSetupDialog onClose={() => setAccountingSetupOpen(false)} /> : null}
+      {retractingStep !== null ? <Modal open title="Retract completion?" onClose={() => { if (!action.isPending) setRetractingStep(null); }}><p className="text-sm leading-6">Retract {importSteps[retractingStep]} and its later completion marks. Saved fields, product lines and documents stay unchanged. Review them before completing the steps again.</p>{action.isError ? <ErrorBlock error={action.error} /> : null}<div className="mt-4 flex justify-end"><Button variant="primary" disabled={action.isPending} icon={<RotateCcw className="h-4 w-4" />} onClick={() => action.mutate({ run: () => importService.retractStep(record.id, retractingStep), success: "Completion retracted; saved data preserved", stage: retractingStep })}>Retract Completion</Button></div></Modal> : null}
       {modal === "reopen" ? <ReopenModal busy={action.isPending} onClose={() => setModal(null)} onSubmit={(reason) => action.mutate({ run: () => importService.reopen(record.id, reason), success: "Landed cost reopened with an audit reason" })} /> : null}
       {extraction ? <Modal open title="AI Extracted Fields" subtitle={`${extraction.documentName} | review required; nothing is overwritten automatically.`} onClose={() => setExtraction(null)} width="max-w-3xl"><AIDocumentExtractReview extraction={extraction} busy={action.isPending} onApply={applyExtractedFields} /></Modal> : null}
       <DocumentViewer document={viewingDocument} onClose={() => setViewingDocument(null)} />

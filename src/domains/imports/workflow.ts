@@ -6,6 +6,8 @@ export const importSteps = ["PO / Draft", "PI & Products", "LC / TT", "Productio
 export const importStepActions = ["Mark PO Complete", "Mark PI Received", "Mark LC / TT Opened", "Mark In Production", "Mark Shipped", "Mark At Port", "Mark Costing", "Mark Cost Finalized", "Receive to Warehouse", "Close Case"] as const;
 const through: Record<ImportCase["status"], number> = { Draft: -1, "PI Received": 0, "LC/TT Opened": 1, "In Production": 3, Shipped: 4, "At Port": 5, Costing: 6, "Cost Finalized": 7, "Partially Received": 7, Received: 8, Closed: 9, Cancelled: -1 };
 const positive = (value: string) => { try { const n = new Decimal(value); return n.isFinite() && n.gt(0); } catch { return false; } };
+export const confirmationEpoch = (events: { action: string; details: Record<string, unknown> }[], step: number) => events.filter(e => e.action === "Import stage retracted" && typeof e.details.step === "number" && e.details.step <= step).length;
+export const retractedImportStatus = (step: number): ImportCase["status"] => (["Draft", "Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port"] as const)[step];
 
 export function importConfirmationSource(record: ImportCase, step: number): string {
   if (step === 0) return JSON.stringify([record.supplierId, record.poNumber, record.poDate]);

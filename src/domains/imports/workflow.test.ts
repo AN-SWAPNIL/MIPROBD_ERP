@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ImportCase } from "../erp.types.js";
-import { importConfirmationSource, importStepActions, importSteps, importWorkflow } from "./workflow.js";
+import { confirmationEpoch, importConfirmationSource, importStepActions, importSteps, importWorkflow, retractedImportStatus } from "./workflow.js";
 
 function record(overrides: Partial<ImportCase> = {}): ImportCase {
   return { id: "imp", draftReference: "IMP-1", primaryReference: "LC-1", supplierId: "supplier", supplierName: "Supplier", poNumber: "PO-1", poDate: "2026-11-01", piNumber: "PI-1", piDate: "2026-11-02", paymentMode: "LC", lcNumber: "LC-1", currency: "USD", exchangeRate: "120", rateDate: "2026-11-02", rateSource: "Bank", status: "Draft", milestone: "Draft", costingStatus: "Not Started", warehouseStatus: "Not Ready", items: [{ id: "i", productId: "p", productCode: "P", productName: "Product", quantity: "10", unit: "pcs", currency: "USD", fobUnitForeign: "2", exchangeRate: "120", fobTotalBdt: "2400", cbmPerCarton: "1", cartonCount: "1", totalCbm: "1" }], costs: [], documents: [], createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", ...overrides };
@@ -47,4 +47,10 @@ test("reopening a closed case returns only closure to pending, not costing or re
   assert.equal(flow.currentStep, 9); assert.ok(flow.steps.slice(0, 9).every(step => step.completed));
   assert.equal(flow.steps[9].completed, false); assert.deepEqual(flow.steps[9].reasons, []);
   assert.equal(reopened.costingStatus, "Finalized"); assert.equal(reopened.warehouseStatus, "Received");
+});
+test("retractions invalidate the selected confirmation and all later confirmations without discarding fields", () => {
+  const events = [{ action: "Import stage retracted", details: { step: 1 } }];
+  assert.equal(confirmationEpoch(events, 0), 0); assert.equal(confirmationEpoch(events, 1), 1); assert.equal(confirmationEpoch(events, 2), 1);
+  assert.equal(confirmationEpoch([...events, ...events], 2), 2);
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map(retractedImportStatus), ["Draft", "Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port"]);
 });

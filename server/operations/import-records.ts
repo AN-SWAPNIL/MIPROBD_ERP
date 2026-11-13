@@ -11,7 +11,7 @@ import { newId } from "./common.js";
 import { itemInput } from "./contracts.js";
 import type { z } from "zod";
 import { digest } from "../foundation/context.js";
-import { importConfirmationSource } from "../../src/domains/imports/workflow.js";
+import { confirmationEpoch, importConfirmationSource } from "../../src/domains/imports/workflow.js";
 
 export const money = (value: Decimal.Value) => new Decimal(value).toFixed(2);
 const CostDecimal = Decimal.clone({ precision: 48, rounding: Decimal.ROUND_HALF_UP });
@@ -23,7 +23,7 @@ export async function loadImports(tx: Transaction, id?: string): Promise<ImportC
   const costs = await tx.select().from(importCosts).where(inArray(importCosts.importId, ids)).orderBy(importCosts.id);
   const snapshots = await tx.select().from(landedSnapshots).where(inArray(landedSnapshots.importId, ids)).orderBy(landedSnapshots.version);
   const files = await tx.select({ document: documents, name: employees.name }).from(documents).innerJoin(employees, eq(documents.uploadedBy, employees.id)).where(inArray(documents.importId, ids));
-  const confirmations = await tx.select({ entityId: auditEvents.entityId, action: auditEvents.action, details: auditEvents.details }).from(auditEvents).where(and(eq(auditEvents.entityType, "Import"), inArray(auditEvents.entityId, ids), inArray(auditEvents.action, ["Import workflow started", "Import stage confirmed"])));
+  const confirmations = await tx.select({ entityId: auditEvents.entityId, action: auditEvents.action, details: auditEvents.details }).from(auditEvents).where(and(eq(auditEvents.entityType, "Import"), inArray(auditEvents.entityId, ids), inArray(auditEvents.action, ["Import workflow started", "Import stage confirmed", "Import stage retracted"])));
   return records.map((record) => {
     const snapshotHistory = snapshots.filter((row) => row.importId === record.id).map((row) => row.data);
     const snapshot = record.currentSnapshotVersion === null ? undefined : snapshotHistory.find((row) => row.version === record.currentSnapshotVersion);
@@ -38,7 +38,7 @@ export async function loadImports(tx: Transaction, id?: string): Promise<ImportC
       costs: caseCosts, documents: files.filter(({ document }) => document.importId === record.id && document.status === "Attached").map(({ document, name }) => ({ id: document.id, importId: record.id, entityType: "import" as const, entityId: record.id, documentType: document.documentType, type: document.documentType, name: document.fileName, fileName: document.fileName, mimeType: document.mimeType, sizeBytes: document.sizeBytes, source: "UPLOADED" as const, previewUrl: `/api/documents/${document.id}`, sensitive: document.sensitive, createdByUserId: document.uploadedBy, createdByName: name, createdAt: document.createdAt.toISOString(), uploadedAt: document.attachedAt!.toISOString(), uploadedBy: name, status: "Available" as const })), snapshot, snapshotHistory, createdAt: record.createdAt.toISOString(), updatedAt: record.updatedAt.toISOString()
     };
     const history = confirmations.filter(event => event.entityId === record.id);
-    if (history.length) result.confirmedSteps = [0, 1, 2].filter(step => history.some(event => event.action === "Import stage confirmed" && event.details.step === step && event.details.fingerprint === digest(importConfirmationSource(result, step))));
+    if (history.length) result.confirmedSteps = [0, 1, 2].filter(step => history.some(event => event.action === "Import stage confirmed" && event.details.step === step && (event.details.epoch ?? 0) === confirmationEpoch(history, step) && event.details.fingerprint === digest(importConfirmationSource(result, step))));
     return result;
   });
 }

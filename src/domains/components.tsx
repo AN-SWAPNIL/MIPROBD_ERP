@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { AlertCircle, ChevronDown, Inbox, LoaderCircle, X } from "lucide-react";
-import { useEffect, type ComponentType, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, type ComponentType, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "../lib/api/client";
@@ -11,7 +11,7 @@ import { safeErrorMessage } from "../lib/api/safeErrors";
 import Button from "../components/ui/Button";
 
 export const inputClass =
-  "h-10 w-full rounded-md border border-blue-200 bg-[#fbfdff] px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-blue-300 focus:border-cyan-600 focus:bg-white focus:ring-2 focus:ring-cyan-100 disabled:bg-slate-100 disabled:text-slate-500";
+  "h-10 min-w-0 max-w-full w-full rounded-md border border-blue-200 bg-[#fbfdff] px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-blue-300 focus:border-cyan-600 focus:bg-white focus:ring-2 focus:ring-cyan-100 disabled:bg-slate-100 disabled:text-slate-500";
 export const textareaClass =
   "min-h-24 w-full resize-y rounded-md border border-blue-200 bg-[#fbfdff] px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-blue-300 focus:border-cyan-600 focus:bg-white focus:ring-2 focus:ring-cyan-100 disabled:bg-slate-100";
 export const labelClass = "mb-1 block text-xs font-bold uppercase text-blue-900";
@@ -105,6 +105,26 @@ export function Modal({
   footer?: ReactNode;
   width?: string;
 }) {
+  const root = useRef<HTMLDivElement>(null);
+  const close = useEffectEvent(onClose);
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const visibleControls = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex="0"]') ?? []).filter(node => !node.hasAttribute("disabled") && node.tabIndex >= 0 && node.getClientRects().length > 0);
+    const timer = requestAnimationFrame(() => root.current?.focus({ preventScroll: true }));
+    const onKey = (event: KeyboardEvent) => {
+      if (document.querySelectorAll('[data-erp-dialog]').item(document.querySelectorAll('[data-erp-dialog]').length - 1) !== root.current || event.defaultPrevented) return;
+      if (event.key === "Escape") { event.preventDefault(); close(); }
+      if (event.key === "Tab") {
+        const controls = visibleControls(), first = controls[0], last = controls.at(-1);
+        if (!first) { event.preventDefault(); return; }
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === root.current)) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === root.current)) { event.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => { cancelAnimationFrame(timer); document.removeEventListener("keydown", onKey); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     if (!openModalCount) bodyOverflowBeforeModal = document.body.style.overflow;
@@ -114,20 +134,20 @@ export function Modal({
   }, [open]);
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title} onSubmit={(event) => event.stopPropagation()}>
-      <button className="absolute inset-0 cursor-default" type="button" onClick={onClose} aria-label="Close dialog" />
+    <div ref={root} data-erp-dialog tabIndex={-1} className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-0 outline-none sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title} onSubmit={(event) => event.stopPropagation()}>
+      <button className="absolute inset-0 cursor-default" type="button" tabIndex={-1} onClick={onClose} aria-label="Close dialog" />
       <div className={clsx("relative flex max-h-[94vh] w-full flex-col overflow-hidden rounded-t-md bg-white shadow-2xl sm:rounded-md", width)}>
-        <div className="flex items-start justify-between gap-4 border-b border-blue-900 bg-blue-950 px-4 py-3 text-white">
-          <div>
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-blue-900 bg-blue-950 px-4 py-3 text-white">
+          <div className="min-w-0 break-words">
             <h2 className="text-lg font-bold text-white">{title}</h2>
             {subtitle ? <p className="mt-0.5 text-xs leading-5 text-blue-100">{subtitle}</p> : null}
           </div>
-          <button className="rounded p-1.5 text-blue-100 hover:bg-white/10 hover:text-white" type="button" onClick={onClose} aria-label="Close">
+          <button className="shrink-0 rounded p-1.5 text-blue-100 hover:bg-white/10 hover:text-white" type="button" onClick={onClose} aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="overflow-y-auto p-4">{children}</div>
-        {footer ? <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">{footer}</div> : null}
+        <div className="min-h-0 min-w-0 overflow-y-auto overscroll-contain p-4">{children}</div>
+        {footer ? <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">{footer}</div> : null}
       </div>
     </div>, document.body
   );
@@ -172,7 +192,7 @@ export function SectionAccordion({
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded bg-cyan-50 text-cyan-700"><Icon className="h-4 w-4" /></span>
         <div className="min-w-[140px] flex-1">
           <h2 id={id ? `${id}-heading` : undefined} className="break-words text-sm font-bold text-blue-950 sm:text-base">{title}</h2>
-          {subtitle ? <p className="mt-0.5 truncate text-xs text-slate-500">{subtitle}</p> : null}
+          {subtitle ? <p className="mt-0.5 break-words text-xs text-slate-500">{subtitle}</p> : null}
         </div>
         {status}
         {current ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-900">Current step</span> : null}

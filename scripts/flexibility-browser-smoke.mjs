@@ -38,6 +38,7 @@ try {
       await context.route((url) => url.origin === origin && url.pathname.startsWith("/api/"), async (route) => {
         const request = route.request(); const url = new URL(request.url()); const path = url.pathname; const body = request.method() === "GET" ? undefined : request.postDataJSON(); let data; let status = 200;
         if (path === "/api/me") data = session;
+        else if (path === "/api/controls/policies") data = { rows: [], people: [{ id: "reviewer", name: "Alex Reviewer", role: "Accounts" }, { id: "approver", name: "Sam Approver", role: "Managing Director" }] };
         else if (path === "/api/suppliers" || path === "/api/settings/suppliers") {
           if (request.method() === "POST") { supplierRows.push({ id: "ui-supplier", contactPerson: "", phone: "", email: "", paymentTerms: "", active: true, ...body }); status = 201; }
           data = request.method() === "POST" ? supplierRows.at(-1) : supplierRows;
@@ -52,7 +53,10 @@ try {
           const rows = url.searchParams.get("kind") === "accounts" ? accountRows.filter((a) => !url.searchParams.get("accountType") || a.type === url.searchParams.get("accountType")) : [];
           data = { rows, selected: rows.find((row) => row.id === url.searchParams.get("selectedId")) ?? null, total: rows.length, page: 1, pageSize: 25 };
         } else if (path === "/api/ledger/status") data = { strictPosting: true, configurationId: ledgerReady ? "starter-config" : null, cutover: ledgerReady ? today : null, deferred: 0, periods: [] };
-        else if (path === "/api/ledger/configurations") data = configurations;
+        else if (path === "/api/ledger/configurations") {
+          if (request.method() === "POST") { configurations.push({ id: "next-config", state: "Draft", version: 1, createdBy: user.id, approvedBy: null, data: body }); data = { id: "next-config" }; status = 201; }
+          else data = configurations;
+        }
         else if (path === "/api/ledger/cash-masters") data = accountRows;
         else if (path === "/api/ledger/configurations/starter") {
           assert.equal(body.acknowledgeDraft, true); assert.equal(ledgerReady, false);
@@ -79,6 +83,7 @@ try {
         } else if (path.startsWith("/api/documents/")) data = { url: `${origin}/favicon.png` };
         else if (path === "/api/imports" && request.method() === "POST") { importPosts.push(body); record = { ...record, ...body, items: [importLine()] }; data = record; status = 201; }
         else if (path === "/api/imports/ui-import/confirm-step") { record = { ...record, confirmedSteps: [...new Set([...record.confirmedSteps, body.step])] }; data = record; }
+        else if (path === "/api/imports/ui-import/retract-step") { record = { ...record, confirmedSteps: record.confirmedSteps.filter(step => step < body.step), status: ["Draft", "Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port"][body.step] }; data = record; }
         else if (path === "/api/imports/ui-import/receiving-readiness") data = { ready: ledgerReady, canConfigure: true, message: ledgerReady ? "Company accounting setup is approved." : "Super Admin must finish the company accounting setup in Expenses & Accounts > General Ledger > Accounting Setup. This is a company-wide prerequisite, not a setting for each warehouse receipt." };
         else if (path === "/api/imports/ui-import/reopen-case") {
           assert.equal(record.status, "Closed"); assert.deepEqual(body, {});
@@ -150,6 +155,10 @@ try {
       await dialog.getByRole("button", { name: "Save", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); assert.equal(importPosts.length, 0, "Nested creation must not submit the import form");
       await page.getByLabel("PO Number", { exact: true }).fill("PO-TEST"); await page.getByRole("button", { name: "Create Draft Import", exact: true }).click();
       await page.waitForURL("**/backend/imports/ui-import"); await page.getByRole("button", { name: "Mark PO Complete", exact: true }).click(); await assertSections(1);
+      await page.getByRole("button", { name: "Retract PO / Draft completion", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Retract completion?", exact: true }); await dialog.getByRole("button", { name: "Retract Completion", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+      await assertSections(0); assert.equal(record.poNumber, "PO-TEST");
+      await page.getByRole("button", { name: "Mark PO Complete", exact: true }).click(); await assertSections(1);
       assert.equal(await page.getByRole("button", { name: "Mark PI Received", exact: true }).isEnabled(), false);
       await capture("import-products");
       await page.getByRole("button", { name: "Edit purchase order", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Edit purchase order", exact: true });
@@ -219,14 +228,17 @@ try {
       const setupDialog = page.getByRole("dialog", { name: "Company Accounting Setup", exact: true }); await setupDialog.waitFor();
       await page.getByRole("button", { name: "Starter Setup", exact: true }).click();
       dialog = page.getByRole("dialog", { name: "Starter Accounting Setup", exact: true });
+      await dialog.getByLabel("Setup reference", { exact: true }).fill("Owner-reviewed UAT setup");
+      await dialog.getByRole("button", { name: "Continue to Accounts", exact: true }).click();
       assert.equal(await dialog.getByRole("combobox", { name: "Account for Inventory", exact: true }).inputValue(), "", "Suggested template must be explicit, not a hidden selected company account");
       await dialog.getByRole("combobox", { name: "Account for Inventory", exact: true }).selectOption("__add_chart__");
       const chartDialog = page.getByRole("dialog", { name: "Add chart account", exact: true });
       await chartDialog.getByLabel("Account code", { exact: true }).fill("INV-COMPANY"); await chartDialog.getByLabel("Account name", { exact: true }).fill("Company Medical Stock");
       await chartDialog.getByRole("button", { name: "Save Account", exact: true }).click(); await chartDialog.waitFor({ state: "hidden" });
       assert.equal(await dialog.getByRole("combobox", { name: "Account for Inventory", exact: true }).inputValue(), "chart-company-stock");
-      await dialog.getByLabel("Setup reference", { exact: true }).fill("Owner-reviewed UAT setup");
       await dialog.getByRole("combobox", { name: "Account for Inventory", exact: true }).scrollIntoViewIfNeeded(); await capture("starter-accounting-choices");
+      await dialog.getByRole("button", { name: "Review Draft", exact: true }).click();
+      assert.equal(await dialog.getByRole("button", { name: "Save Starter Draft", exact: true }).isEnabled(), false);
       await dialog.getByRole("checkbox").check(); await capture("starter-accounting-review");
       await dialog.getByRole("button", { name: "Save Starter Draft", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); assert.equal(ledgerReady, false);
       assert.equal(configurations[0].data.mappings.find(m => m.role === "Inventory").accountId, "chart-company-stock");
@@ -277,6 +289,43 @@ try {
       await page.goto(`${origin}/backend/accounts/ledger/journals/new`); await page.getByRole("combobox", { name: "Account line 1", exact: true }).selectOption("__add_chart__");
       dialog = page.getByRole("dialog", { name: "Add chart account", exact: true }); await dialog.getByLabel("Account code", { exact: true }).fill("9999"); await dialog.getByLabel("Account name", { exact: true }).fill("Review Chart Account");
       await dialog.getByRole("button", { name: "Save Account", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); assert.equal(await page.getByRole("combobox", { name: "Account line 1", exact: true }).inputValue(), "chart-review"); await capture("inline-chart-account");
+      await page.goto(`${origin}/backend/accounts/ledger?view=mapping`);
+      await page.getByRole("button", { name: "New Setup Version", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Accounting setup draft", exact: true });
+      await dialog.getByRole("button", { name: "Continue to Accounts", exact: true }).click();
+      assert.equal(await dialog.locator('[data-locked-account="Inventory"]').count(), 1);
+      assert.equal(await dialog.getByRole("combobox", { name: "Inventory chart account", exact: true }).count(), 0, "Approved assignments must not look like broken dropdowns");
+      assert.equal(await dialog.getByRole("button", { name: "Review Draft", exact: true }).isEnabled(), false, "New bank account must be assigned before review");
+      await dialog.getByRole("combobox", { name: "Review Bank chart account", exact: true }).selectOption("chart-review");
+      await capture("accounting-version-assignments");
+      await dialog.getByRole("button", { name: "Review Draft", exact: true }).click();
+      await dialog.getByRole("button", { name: "Back", exact: true }).click();
+      assert.equal(await dialog.getByRole("combobox", { name: "Review Bank chart account", exact: true }).inputValue(), "chart-review", "Choices must survive wizard navigation");
+      await dialog.getByRole("button", { name: "Review Draft", exact: true }).click();
+      await dialog.getByRole("checkbox").check(); await dialog.getByRole("button", { name: "Save Setup Draft", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+      assert.deepEqual(configurations[1].data.mappings, configurations[0].data.mappings);
+      assert.deepEqual(configurations[1].data.cashMappings, [{ cashAccountId: "ui-account", accountId: "chart-review" }]);
+      assert.equal(configurations[1].state, "Draft");
+      await page.goto(`${origin}/backend/accounts/ledger?view=chart`);
+      await page.getByLabel("Search accounts", { exact: true }).fill("Company Medical");
+      assert.equal(await page.locator("tbody tr").count(), 1);
+      await page.getByLabel("Account type", { exact: true }).selectOption("Expense");
+      await page.getByText("No accounts match these filters.", { exact: true }).waitFor();
+      await page.getByLabel("Account type", { exact: true }).selectOption(""); await capture("chart-search");
+      await page.goto(`${origin}/backend/settings/approvals`);
+      await page.getByRole("button", { name: "New Policy", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "New approval policy", exact: true });
+      await dialog.getByRole("button", { name: "Close", exact: true }).focus();
+      await page.keyboard.press("Shift+Tab");
+      assert.equal(await dialog.getByRole("button", { name: "Save Draft", exact: true }).evaluate(el => el === globalThis.document.activeElement), true, "Focus must remain inside the dialog");
+      await dialog.getByLabel("Find verifier / approver", { exact: true }).fill("Alex");
+      await dialog.getByRole("group", { name: "Verifiers (0 selected)", exact: true }).getByRole("checkbox", { name: /Alex Reviewer/ }).check();
+      await dialog.getByLabel("Find verifier / approver", { exact: true }).fill("Sam");
+      await dialog.getByText("Selected: Alex Reviewer", { exact: true }).waitFor();
+      await capture("approval-authority-search");
+      await dialog.getByLabel("Find verifier / approver", { exact: true }).fill("");
+      assert.equal(await dialog.getByRole("group", { name: "Verifiers (1 selected)", exact: true }).getByRole("checkbox", { name: /Alex Reviewer/ }).isChecked(), true);
+      await page.keyboard.press("Escape"); await dialog.waitFor({ state: "hidden" });
       assert.deepEqual(errors, []); console.log(`PASS ${width}px: inline supplier/product/unit creation, private image limit, 10 import stages, LC/TT/Pending payloads/errors, document attachment, At Port to Costing to finalized snapshot/receiving, purchase receipt, safe service errors and inline cash/bank/chart accounts. Browser API intercepted; no live records changed.`);
     } finally { await context.close(); }
   }
