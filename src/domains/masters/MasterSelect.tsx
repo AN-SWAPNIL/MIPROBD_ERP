@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "../../lib/auth/session";
 import { hasEffectivePermission } from "../../lib/permissions/effectiveAccess";
+import { safeErrorMessage } from "../../lib/api/safeErrors";
 import { Modal, inputClass } from "../components";
 import { salesService, settingsService } from "../services";
 import MasterEditor, { type MasterKind, type MasterRecord } from "./MasterEditor";
@@ -22,7 +23,7 @@ export default function MasterSelect({ kind, label, value, onChange, required, d
     <option value="">{query.isPending && !options ? "Loading..." : `Select ${singular}`}</option>
     {rows.map((r) => <option value={r.id} key={r.id}>{r.label}</option>)}
     {canAdd ? <option value="__add_master__">+ Add {singular}...</option> : null}
-  </select>{query.isError && !options ? <p role="alert" className="text-xs text-red-700">{query.error.message} <button type="button" className="underline" onClick={() => void query.refetch()}>Retry</button></p> : null}
+  </select>{query.isError && !options ? <p role="alert" className="text-xs text-red-700">{safeErrorMessage(query.error)} <button type="button" className="underline" onClick={() => void query.refetch()}>Retry</button></p> : null}
     {adding ? <Modal open title={`Add ${singular}`} onClose={() => setAdding(false)}><MasterEditor kind={kind} selectionMode onSaved={(row) => { setCreated(row); onChange(row.id, row); setAdding(false); }} /></Modal> : null}
   </div>;
 }

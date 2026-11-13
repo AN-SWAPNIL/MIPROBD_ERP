@@ -20,7 +20,7 @@ export function CommercialEditor({ record, busy, onSubmit, requirePi = false }: 
   const change = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
   return <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); onSubmit(requirePi ? { piNumber: form.piNumber, piDate: form.piDate } : { supplierId: form.supplierId, poNumber: form.poNumber, poDate: form.poDate, expectedShipmentDate: form.expectedShipmentDate, notes: form.notes }); }}>
     {!requirePi ? <>
-    <label className="sm:col-span-2"><span className={labelClass}>Supplier</span><MasterSelect kind="suppliers" label="Supplier" value={form.supplierId} onChange={(value) => change("supplierId", value)} required disabled={!["Draft", "PI Received", "LC/TT Opened"].includes(record.status)} /></label>
+    <label className="sm:col-span-2"><span className={labelClass}>Supplier</span><MasterSelect kind="suppliers" label="Supplier" value={form.supplierId} onChange={(value) => change("supplierId", value)} required /></label>
     <label><span className={labelClass}>PO Number</span><input className={inputClass} value={form.poNumber} maxLength={200} onChange={(e) => change("poNumber", e.target.value)} required /></label>
     <label><span className={labelClass}>PO Date</span><input className={inputClass} type="date" value={form.poDate} onChange={(e) => change("poDate", e.target.value)} required /></label>
     </> : null}

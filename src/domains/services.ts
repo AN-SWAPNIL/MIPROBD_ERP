@@ -181,6 +181,7 @@ export const importService = {
   get: (id: string) => get<ImportCase>("/api/imports/" + id, ImportCaseSchema),
   create: (payload: Partial<ImportCase>) => post<ImportCase>("/api/imports", { ...paymentPayload(payload), guidedWorkflow: true }, ImportCaseSchema),
   confirmStep: (id: string, step: number) => post<ImportCase>(`/api/imports/${id}/confirm-step`, { step }, ImportCaseSchema),
+  retractStep: (id: string, step: number) => post<ImportCase>(`/api/imports/${id}/retract-step`, { step }, ImportCaseSchema),
   receivingReadiness: (id: string) => get(`/api/imports/${id}/receiving-readiness`, z.object({ ready: z.boolean(), canConfigure: z.boolean(), message: z.string() })),
   update: (id: string, payload: Partial<ImportCase>) => patch<ImportCase>("/api/imports/" + id, paymentPayload(payload), ImportCaseSchema),
   transition: (id: string, status: string) => post<ImportCase>("/api/imports/" + id + "/transition", { status }, ImportCaseSchema),

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { and, eq } from "drizzle-orm";
 import { Decimal } from "decimal.js";
-import { importCases, importItems, importCosts, suppliers, landedSnapshots, postingKeys, warehouseReceipts } from "../../database/schema.js";
+import { auditEvents, importCases, importItems, importCosts, suppliers, landedSnapshots, postingKeys, warehouseReceipts } from "../../database/schema.js";
 import { calculateLandedCost } from "../../src/domains/imports/costing.js";
 import type { ImportCase, ImportCostLine, LandedCostSnapshot } from "../../src/domains/erp.types.js";
 import { hasCapability, hasEffectivePermission } from "../../src/lib/permissions/effectiveAccess.js";
@@ -13,7 +13,7 @@ import { canonicalItem, loadImport, loadImports, lockImport, money, visibleImpor
 import { activePaymentFields, paymentPayload } from "../../src/domains/imports/paymentPayload.js";
 import { z } from "zod";
 import { digest } from "../foundation/context.js";
-import { importConfirmationSource, importWorkflow } from "../../src/domains/imports/workflow.js";
+import { confirmationEpoch, importConfirmationSource, importWorkflow, retractedImportStatus } from "../../src/domains/imports/workflow.js";
 const CostDecimal = Decimal.clone({ precision: 48, rounding: Decimal.ROUND_HALF_UP });
 
 function baseStatus(commercial: Pick<ImportCase, "piNumber" | "paymentMode" | "lcNumber" | "ttReference">) {
@@ -66,11 +66,13 @@ export function createImportRouter(ctx: Context) {
     const patch = updateImportInput.parse(paymentPayload(req.body));
     await ctx.db.transaction(async (tx) => {
       const user = await lockActor(tx, identity(res), "import", "edit");
-      const row = await lockImport(tx, String(req.params.id), true);
+      const row = await lockImport(tx, String(req.params.id));
+      if (["Closed", "Cancelled"].includes(row.status)) throw new HttpError(423, "Reopen the closed case before editing. Cancelled cases are read-only.");
+      const followUpFields = ["productionStatus", "productionFollowUpNote", "commercialInvoiceNumber", "commercialInvoiceDate", "blNumber", "containerNumber", "containerType", "vesselName", "etd", "eta", "notes", "expectedShipmentDate"];
+      if (row.currentSnapshotVersion !== null && Object.keys(patch).some(key => !followUpFields.includes(key))) throw new HttpError(423, "Posted commercial values and costing are protected. Reopen unreceived costing first; received stock needs a source-linked correction. Production and shipment follow-up remain editable.");
       const { supplierId, ...commercialPatch } = patch;
       let supplierName = row.supplierName;
       if (supplierId && supplierId !== row.supplierId) {
-        if (!["Draft", "PI Received", "LC/TT Opened"].includes(row.status)) throw new HttpError(409, "Supplier cannot be changed after production starts. Keep this case's original supplier and create another import if needed.");
         const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, supplierId)).for("share");
         if (!supplier?.active) throw new HttpError(422, "Select an active supplier.", [{ field: "supplierId", message: "Select an active supplier." }]);
         supplierName = supplier.name;
@@ -78,7 +80,7 @@ export function createImportRouter(ctx: Context) {
       if (!hasCapability(user, "edit_sensitive_cost")) { delete commercialPatch.exchangeRate; delete commercialPatch.lcAmount; delete commercialPatch.lcBankAmount; delete commercialPatch.lcOtherAmount; delete commercialPatch.ttAmount; }
       const validated = validateCommercial(activePaymentFields({ ...row.commercial, ...commercialPatch }));
       const commercial = { ...validated, rateDate: validated.rateDate ?? "" };
-      if (!["Draft", "PI Received", "LC/TT Opened"].includes(row.status) && baseStatus(commercial) !== "LC/TT Opened") throw new HttpError(422, "PI and LC/TT reference cannot be removed after production starts.");
+      if (row.currentSnapshotVersion === null && !["Draft", "PI Received", "LC/TT Opened"].includes(row.status) && baseStatus(commercial) !== "LC/TT Opened") throw new HttpError(422, "Retract the relevant completion mark before removing required PI or LC/TT references.");
       await tx.update(importCases).set({ commercial, supplierId: supplierId ?? row.supplierId, supplierName, status: ["Draft", "PI Received", "LC/TT Opened"].includes(row.status) ? baseStatus(commercial) : row.status, updatedAt: new Date() }).where(eq(importCases.id, row.id));
       await audit(tx, user.id, "Import commercial details updated", "Import", row.id, supplierId && supplierId !== row.supplierId ? { previousSupplierId: row.supplierId, supplierId } : {});
     });
@@ -222,9 +224,26 @@ export function createImportRouter(ctx: Context) {
       if (record.confirmedSteps?.includes(step)) return;
       // Preserve inferred progress for pre-guided records when their first confirmation is saved.
       const inherited = record.confirmedSteps === undefined ? [0, 1, 2].filter(index => workflow.steps[index].completed) : [];
-      for (const index of new Set([...inherited, step])) await audit(tx, user.id, "Import stage confirmed", "Import", row.id, { step: index, fingerprint: digest(importConfirmationSource(record, index)) });
+      const history = await tx.select({ action: auditEvents.action, details: auditEvents.details }).from(auditEvents).where(and(eq(auditEvents.entityType, "Import"), eq(auditEvents.entityId, row.id), eq(auditEvents.action, "Import stage retracted")));
+      for (const index of new Set([...inherited, step])) await audit(tx, user.id, "Import stage confirmed", "Import", row.id, { step: index, epoch: confirmationEpoch(history, index), fingerprint: digest(importConfirmationSource(record, index)) });
+      if (["Draft", "PI Received", "LC/TT Opened"].includes(row.status) && step > 0) await tx.update(importCases).set({ status: step === 1 ? "PI Received" : "LC/TT Opened", updatedAt: new Date() }).where(eq(importCases.id, row.id));
     });
     res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Saved import stage confirmed" });
+  });
+  router.post("/imports/:id/retract-step", async (req, res) => {
+    const { step } = z.object({ step: z.number().int().min(0).max(6) }).strict().parse(req.body);
+    await ctx.db.transaction(async tx => {
+      const user = await lockActor(tx, identity(res), "import", "edit");
+      const row = await lockImport(tx, String(req.params.id), true);
+      const record = await loadImport(tx, row.id);
+      if (!importWorkflow(record).steps[step].completed) throw new HttpError(409, "This step is not completed. Reload the case before retracting a mark.");
+      const [receipt] = await tx.select({ id: warehouseReceipts.id }).from(warehouseReceipts).where(eq(warehouseReceipts.importId, row.id)).limit(1);
+      if (receipt) throw new HttpError(409, "Receipt-backed steps cannot be retracted. Use the stock correction workflow instead.");
+      if (record.confirmedSteps === undefined) for (const index of [0, 1, 2].filter(i => i < step && importWorkflow(record).steps[i].completed)) await audit(tx, user.id, "Import stage confirmed", "Import", row.id, { step: index, fingerprint: digest(importConfirmationSource(record, index)), epoch: 0 });
+      await audit(tx, user.id, "Import stage retracted", "Import", row.id, { step, from: row.status, to: retractedImportStatus(step) });
+      await tx.update(importCases).set({ status: retractedImportStatus(step), updatedAt: new Date() }).where(eq(importCases.id, row.id));
+    });
+    res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Completion retracted. Saved fields and documents are unchanged; later steps require completion again." });
   });
   router.delete("/imports/:id", async (req, res) => {
     await ctx.db.transaction(async (tx) => {

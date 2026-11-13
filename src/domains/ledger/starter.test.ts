@@ -2,6 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ledgerMappingRoles, ledgerRoleKind } from "./contracts.js";
 import { ledgerSetupReviewIssues, ledgerStarterInput, ledgerStarterProposal } from "./starter.js";
+import { ledgerBusinessGroup, ledgerBusinessGroups } from "./setupGroups.js";
+
+test("business sections cover every posting purpose exactly once, including payment and equity accounts", () => {
+  const roles = ledgerBusinessGroups.flatMap(g => g.roles);
+  assert.equal(new Set(roles).size, roles.length);
+  assert.deepEqual([...roles].sort(), [...ledgerMappingRoles].sort());
+  for (const row of ledgerStarterProposal([], [{ id: "bank-1", name: "Bank", active: true }])) assert.ok(ledgerBusinessGroup(row.key));
+  assert.equal(ledgerBusinessGroup("cash:bank-1"), "cash");
+  assert.equal(ledgerBusinessGroup("equity:Owner Capital"), "equity");
+});
 
 test("starter proposes separate control/equity accounts and maps only real active payment masters", () => {
   const rows = ledgerStarterProposal([], [{ id: "b", name: "Bank", active: true }, { id: "a", name: "Cash", active: true }, { id: "closed", name: "Closed", active: false }]);
