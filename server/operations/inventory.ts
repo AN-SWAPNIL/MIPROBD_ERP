@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { and, eq, sql } from "drizzle-orm";
 import { Decimal } from "decimal.js";
-import { importCases, openingPositions, postingKeys, receiptLines, stockBatches, stockMovements, warehouseReceipts } from "../../database/schema.js";
+import { importCases, ledgerConfigurations, openingPositions, postingKeys, receiptLines, stockBatches, stockMovements, warehouseReceipts } from "../../database/schema.js";
 import type { Transaction } from "../../database/client.js";
 import type { DispatchPreview, StockBatch, WarehouseReceipt } from "../../src/domains/erp.types.js";
 import type { User } from "../../src/types/index.js";
@@ -65,6 +65,18 @@ async function readReceipts(tx: Transaction, importId: string, user: User, recei
 export function createInventoryRouter(ctx: Context) {
   const router = Router();
   router.use(createInventoryReadRouter(ctx));
+  router.get("/imports/:id/receiving-readiness", async (req, res) => {
+    const user = identity(res).user;
+    assertAllowed(hasEffectivePermission(user, "inventory", "post"));
+    const data = await ctx.db.transaction(async tx => {
+      await loadImport(tx, String(req.params.id));
+      const [configuration] = await tx.select({ id: ledgerConfigurations.id }).from(ledgerConfigurations).where(eq(ledgerConfigurations.state, "Approved")).limit(1);
+      const strict = process.env.NODE_ENV === "production" || process.env.ERP_REQUIRE_LEDGER_CONFIGURATION === "true";
+      const ready = !strict || Boolean(configuration);
+      return { ready, canConfigure: user.role === "Super Admin" && hasEffectivePermission(user, "settings", "approve"), message: ready ? "Accounting posting is configured." : "Accounting setup is incomplete. Super Admin must review and approve the posting mapping before warehouse stock can be posted." };
+    }, { accessMode: "read only", isolationLevel: "repeatable read" });
+    res.json({ success: true, data, message: "Warehouse posting prerequisites checked" });
+  });
   router.post("/imports/:id/receive", async (req, res) => {
     const input = receiptInput.parse(req.body);
     const actor = identity(res);

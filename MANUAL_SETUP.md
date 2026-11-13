@@ -6,7 +6,7 @@ Updated: 13 November 2026.
 
 The target branch is `dev`. This release requires additive migration `0070_flexible_masters_and_purchases.sql` before running the new API against an existing database. It preserves existing records and adds private product images, reusable dropdown options and purchase receipts.
 
-The owner resumed and restarted `mipro-erp-dev`, resolving the shared-pooler tenant error. The development database was backed up, migration `0070` applied and the restricted runtime grants verified: **71 migrations and 93 private tables**. Existing records were preserved. UAT was not migrated or changed. To repeat development verification on `dev`:
+The owner resumed and restarted `mipro-erp-dev`, resolving the shared-pooler tenant error. Development and UAT have now both been backed up, migrated through `0070`, and verified with restricted runtime grants: **71 migrations and 93 private tables**. Existing records were preserved. The commands below select development on `dev`; do not use hosted synthetic-data tests against UAT:
 
 ```powershell
 npm run db:migrate -- --apply
@@ -19,7 +19,7 @@ The migration and restricted-role scripts back up the selected database first. T
 
 Verified against development: LC/TT/Pending payloads and mode changes, private import/product uploads, purchase stock/payable reconciliation, FIFO, protected costs, duplicate prevention and atomic rollback. The existing import-to-receipt suite and all **80 available SQL reports** also passed. Browser checks cover desktop and 390px mobile.
 
-- Import stages: PO/Draft, PI & Products, LC/TT, Production, Shipment, Port & Documents, Costs & Allocation, Landed Cost, Receiving, Activity & Closure. Browsing a stage does not advance its business status.
+- Import stages: PO/Draft, PI & Products, LC/TT, Production, Shipment, Documents, Costs & Allocation, Landed Cost, Receiving, Activity & Closure. All ten sections and their data stay open together on one scrollable page. Clicking a step scrolls to and highlights that section without hiding any other section or completing work. A separate Current step badge identifies the next required business stage. Each section has its own validated completion action; success advances to the next required section. PO/PI/payment confirmations are saved and affected confirmations become invalid after source edits.
 - Supplier/product/customer/account pickers offer in-place creation only with the relevant permission. Expense categories, cost presets, units, product families, countries, currencies, container types, document types and cost categories are editable where appropriate. Roles, payment/account classifications, statuses, FIFO batches and allocation algorithms remain controlled choices, not arbitrary new options.
 - Product/profile photos use file upload, JPG/PNG/WebP, strictly below 1,000,000 bytes. Files are private; images are decoded/validated before attachment. No pasted product-image URL is required.
 - **Inventory > Add Inventory** posts a purchase receipt with cost and batch traceability. It creates FIFO stock, movements and the matching supplier payable together. Record actual supplier payments under Accounts; the receipt itself does not move cash. The new Purchase Receipts report uses these same saved records.
@@ -30,7 +30,13 @@ Verified against development: LC/TT/Pending payloads and mode changes, private i
 - Changing currency clears the unsaved exchange rate instead of carrying a different currency's rate forward. BDT uses 1. Invalid or scientific-notation numeric inputs produce validation errors rather than crashes; quantities and manual allocations retain exact decimal checks.
 - Required inputs are marked red with an asterisk. Validation identifies fields and numbered line items. Technical response dumps, SQL/provider errors, private URLs and credentials are not shown in error panels/toasts; service failures provide a request reference for support. The server logs bounded diagnostic codes, not submitted passwords, tokens or raw database errors.
 
-The final local regression suite passes **193 tests**, with 30 additional hosted suites skipped unless explicitly enabled. The expanded desktop/390px smoke covers nested creation, payment-type filtering, safe error display, import documents, currency changes and inventory purchases. Separate hosted checks use clearly labelled development-only records, retaining immutable audit/history and removing their temporary Auth identities.
+The local regression suite passes **204 tests**, with 31 hosted suites skipped unless explicitly enabled. The expanded desktop/390px smoke also covers disabled incomplete marks, the owner-reviewed starter accounting draft, separate self-approval, and validated receiving. The development-only guidance integration test verifies stock and ledger reconciliation inside a rolled-back transaction and removes its temporary Auth users; no test mapping becomes company configuration.
+
+## First Accounting Setup
+
+The Receiving screen's **Set Up Accounting** button opens **General Ledger -> Posting Mapping** directly. Super Admin can choose **Starter Setup**, review the proposed accounts and actual accounting start date, enter a setup reference, then **Save Starter Draft**. Nothing is approved or posted at that point. Review the saved mapping and use **Approve**, recording a decision reason; then **Return to Import**. A valid receipt can now post its stock and matching ledger entries together. No SQL, environment changes or second administrator is required. This initial company configuration remains Super Admin-only.
+
+Starter Setup does not invent company balances or cash/bank accounts. Confirm real company data separately. Do not disable the production posting guard to work around an unapproved mapping.
 
 ## Password Recovery
 

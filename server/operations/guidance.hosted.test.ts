@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { eq, sql } from "drizzle-orm";
+import type { Database, Transaction } from "../../database/client.js";
+import { ledgerAccounts, ledgerConfigurations, stockBatches } from "../../database/schema.js";
+import { businessDate } from "../../src/lib/date.js";
+import { hostedHarness } from "../testing/hosted.js";
+
+test("hosted guidance: saved confirmations, safe starter draft, owner approval and atomic receiving", { skip: process.env.RUN_HOSTED_IMPORT_GUIDANCE_TESTS !== "true", timeout: 600000 }, async () => {
+  assert.equal(new URL(process.env.SUPABASE_URL!).hostname, "hyttuapvvqqxcyhojbwq.supabase.co", "Integration writes must never target UAT.");
+  const strict = process.env.ERP_REQUIRE_LEDGER_CONFIGURATION; process.env.ERP_REQUIRE_LEDGER_CONFIGURATION = "true";
+  const h = await hostedHarness("guidance", { serialRequests: true });
+  const contexts = [h.ctx, h.other], databases = contexts.map(c => c.db), pools = contexts.map(c => c.client);
+  const rollback = new Error("ROLLBACK_GUIDANCE_CHECK");
+  try {
+    try { await databases[0].transaction(async tx => {
+      await tx.execute(sql`select set_config('idle_in_transaction_session_timeout','60000',true)`);
+      assert.equal((await tx.select().from(ledgerConfigurations).limit(1)).length, 0, "Preserve an existing company mapping; use an isolated destination for this test.");
+      const isolated = new Proxy(tx, { get(target, prop) {
+        if (prop === "transaction") return (fn: (nested: Transaction) => Promise<unknown>) => target.transaction(async nested => { const result = await fn(nested); await nested.execute(sql`set constraints all immediate`); await nested.execute(sql`set constraints all deferred`); return result; });
+        const value = Reflect.get(target, prop); return typeof value === "function" ? value.bind(target) : value;
+      } }) as unknown as Database;
+      const pool = new Proxy(pools[0], { get(target, prop) { if (prop === "query") return (query: string) => tx.execute(sql.raw(query)); const value = Reflect.get(target, prop); return typeof value === "function" ? value.bind(target) : value; } });
+      for (const context of contexts) { context.db = isolated; context.client = pool; }
+      const owner = await h.employee("Super Admin"), warehouse = await h.employee("Warehouse Manager");
+      const today = businessDate(), future = `${Number(today.slice(0, 4)) + 2}${today.slice(4)}`;
+      const supplier = await h.expect("/suppliers", owner.token, { name: `DEV TEST Guidance ${h.suffix}`, country: "Bangladesh" }, 201);
+      const product = await h.expect("/products", owner.token, { code: `GUIDE-${h.suffix}`, name: "DEV TEST Guidance Product", family: "Medical Consumables", variant: "Test", unit: "Piece" }, 201);
+      let record = await h.expect("/imports", owner.token, { guidedWorkflow: true, supplierId: supplier.id, poNumber: `GUIDE-${h.suffix}`, poDate: today, items: [{ productId: product.id, quantity: "10", currency: "USD", fobUnitForeign: "10", exchangeRate: "120" }] }, 201, h.key("import"));
+      assert.deepEqual(record.confirmedSteps, []);
+      await h.expect(`/imports/${record.id}/confirm-step`, owner.token, { step: 2 }, 422);
+      await h.expect(`/imports/${record.id}/confirm-step`, warehouse.token, { step: 0 }, 403);
+      await h.expect(`/imports/${record.id}/confirm-step`, owner.token, { step: 0 });
+      await h.expect(`/imports/${record.id}/confirm-step`, owner.token, { step: 0 });
+      await h.expect(`/imports/${record.id}`, owner.token, { piNumber: "GUIDE-PI", piDate: today }, 200, { method: "PATCH" });
+      await h.expect(`/imports/${record.id}/confirm-step`, owner.token, { step: 1 });
+      await h.expect(`/imports/${record.id}`, owner.token, { paymentMode: "LC", lcNumber: `GUIDE-LC-${h.suffix}` }, 200, { method: "PATCH" });
+      record = await h.expect(`/imports/${record.id}/confirm-step`, owner.token, { step: 2 }); assert.deepEqual(record.confirmedSteps, [0, 1, 2]);
+      record = await h.expect(`/imports/${record.id}/items/${record.items[0].id}`, owner.token, { quantity: "12" }, 200, { method: "PATCH" });
+      assert.deepEqual(record.confirmedSteps, [0]);
+      await h.expect(`/imports/${record.id}/transition`, owner.token, { status: "In Production" }, 422);
+      for (const step of [1, 2]) await h.expect(`/imports/${record.id}/confirm-step`, owner.token, { step });
+      await h.expect(`/imports/${record.id}/finalize`, owner.token, {}, 409, h.key("premature-finalize"));
+      await h.expect(`/imports/${record.id}/transition`, owner.token, { status: "In Production" });
+      await h.expect(`/imports/${record.id}/transition`, owner.token, { status: "Shipped" }, 422);
+      await h.expect(`/imports/${record.id}`, owner.token, { blNumber: "GUIDE-BL", etd: today }, 200, { method: "PATCH" });
+      for (const status of ["Shipped", "At Port", "Costing"]) await h.expect(`/imports/${record.id}/transition`, owner.token, { status });
+      record = await h.expect(`/imports/${record.id}/finalize`, owner.token, {}, 200, h.key("finalize"));
+      assert.equal(record.snapshot.totalShipmentCostBdt, "14400.00");
+      const receipt = { receivedDate: today, lines: [{ importItemId: record.items[0].id, quantityReceived: "6", quantityRejected: "0", lotNumber: `GUIDE-${h.suffix}`, batchNumber: "GUIDE-A", manufacturingDate: today, expiryDate: future, warehouse: "Main Warehouse", location: "TEST-A1" }] };
+      assert.equal((await h.expect(`/imports/${record.id}/receiving-readiness`, owner.token)).ready, false);
+      await h.expect(`/imports/${record.id}/receive`, owner.token, receipt, 409, h.key("blocked-receipt"));
+      assert.equal((await tx.select().from(stockBatches).where(eq(stockBatches.sourceImportId, record.id))).length, 0);
+      const starter = { effectiveFrom: today, proofReference: "DEV TEST starter, rolled back", acknowledgeDraft: true };
+      await h.expect("/ledger/configurations/starter", warehouse.token, starter, 403);
+      await h.expect("/ledger/configurations/starter", owner.token, { ...starter, acknowledgeDraft: false }, 422);
+      const configuration = await h.expect("/ledger/configurations/starter", owner.token, starter, 201);
+      const [draft] = await tx.select().from(ledgerConfigurations).where(eq(ledgerConfigurations.id, configuration.id));
+      assert.equal(draft.state, "Draft"); assert.equal(draft.approvedBy, null);
+      const chartCount = (await tx.select().from(ledgerAccounts)).length;
+      await h.expect("/ledger/configurations/starter", owner.token, starter, 409);
+      assert.equal((await tx.select().from(ledgerAccounts)).length, chartCount);
+      assert.equal((await h.expect(`/imports/${record.id}/receiving-readiness`, owner.token)).ready, false);
+      await h.expect(`/ledger/configurations/${configuration.id}/approve`, owner.token, { version: 1, reason: "DEV TEST owner reviewed; rollback after verification" });
+      const ready = await h.expect(`/imports/${record.id}/receiving-readiness`, warehouse.token); assert.equal(ready.ready, true); assert.equal(ready.canConfigure, false);
+      await h.expect(`/imports/${record.id}/receive`, owner.token, receipt, 201, h.key("partial"));
+      assert.equal((await h.expect(`/imports/${record.id}`, owner.token)).status, "Partially Received");
+      await h.expect(`/imports/${record.id}/receive`, warehouse.token, { ...receipt, lines: [{ ...receipt.lines[0], batchNumber: "GUIDE-B" }] }, 201, h.key("full"));
+      assert.equal((await h.expect(`/imports/${record.id}`, owner.token)).status, "Received");
+      const totals = (await tx.execute<{ value: string; debit: string; credit: string }>(sql`select (select sum(received_value_bdt)::text from erp_private.stock_batches where source_import_id=${record.id}) value,(select sum(l.debit)::text from erp_private.ledger_lines l join erp_private.ledger_journals j on j.id=l.journal_id where j.source_key in(select 'stock:'||m.id from erp_private.stock_movements m join erp_private.stock_batches b on b.id=m.batch_id where b.source_import_id=${record.id})) debit,(select sum(l.credit)::text from erp_private.ledger_lines l join erp_private.ledger_journals j on j.id=l.journal_id where j.source_key in(select 'stock:'||m.id from erp_private.stock_movements m join erp_private.stock_batches b on b.id=m.batch_id where b.source_import_id=${record.id})) credit`)).rows[0];
+      assert.equal(totals.value, "14400.00"); assert.equal(totals.debit, totals.value); assert.equal(totals.credit, totals.value);
+      await h.expect(`/imports/${record.id}/transition`, owner.token, { status: "Closed" });
+      throw rollback;
+    }); } catch (error) { if (error !== rollback) throw error; }
+  } finally {
+    contexts.forEach((context, index) => { context.db = databases[index]; context.client = pools[index]; });
+    if (strict === undefined) delete process.env.ERP_REQUIRE_LEDGER_CONFIGURATION; else process.env.ERP_REQUIRE_LEDGER_CONFIGURATION = strict;
+    await h.close();
+  }
+});

@@ -11,6 +11,9 @@ import { createImportInput, itemInput, updateImportInput, costInput, transitionI
 import { lockActor, newId, nextNumber, postingIdentity, previousPosting } from "./common.js";
 import { canonicalItem, loadImport, loadImports, lockImport, money, visibleImport } from "./import-records.js";
 import { activePaymentFields, paymentPayload } from "../../src/domains/imports/paymentPayload.js";
+import { z } from "zod";
+import { digest } from "../foundation/context.js";
+import { importConfirmationSource, importWorkflow } from "../../src/domains/imports/workflow.js";
 const CostDecimal = Decimal.clone({ precision: 48, rounding: Decimal.ROUND_HALF_UP });
 
 function baseStatus(commercial: Pick<ImportCase, "piNumber" | "paymentMode" | "lcNumber" | "ttReference">) {
@@ -43,7 +46,7 @@ export function createImportRouter(ctx: Context) {
       if (existing) return existing;
       const [supplier] = await tx.select().from(suppliers).where(eq(suppliers.id, input.supplierId)).for("share");
       if (!supplier?.active) throw new HttpError(422, "Select an active supplier.");
-      const { items, supplierId, ...commercialInput } = input;
+      const { items, supplierId, guidedWorkflow, ...commercialInput } = input;
       const commercial = activePaymentFields(validateCommercial(commercialInput));
       if (!hasCapability(user, "edit_sensitive_cost")) {
         commercial.exchangeRate = "0"; delete commercial.lcAmount; delete commercial.lcBankAmount; delete commercial.lcOtherAmount; delete commercial.ttAmount;
@@ -54,6 +57,7 @@ export function createImportRouter(ctx: Context) {
       for (const item of items) await tx.insert(importItems).values({ ...await canonicalItem(tx, item, user), importId: id });
       await tx.insert(postingKeys).values({ ...key, resourceId: id });
       await audit(tx, user.id, "Import created", "Import", id, { draftReference });
+      if (guidedWorkflow) await audit(tx, user.id, "Import workflow started", "Import", id);
       return id;
     });
     res.status(201).json({ success: true, data: await read(id, identity(res).user), message: "Import created" });
@@ -151,6 +155,8 @@ export function createImportRouter(ctx: Context) {
       if (row.currentSnapshotVersion !== null || ["Closed", "Cancelled", "Received", "Partially Received"].includes(row.status)) throw new HttpError(409, "Import is already finalized or cannot be finalized in this state.");
       const record = await loadImport(tx, row.id);
       if (baseStatus(record) !== "LC/TT Opened" || !record.items.length || record.items.some((item) => new Decimal(item.fobUnitForeign).lte(0) || new Decimal(item.exchangeRate).lte(0))) throw new HttpError(422, "Complete PI, LC/TT reference and positive product FOB/exchange rates before finalization.");
+      if (record.confirmedSteps !== undefined && [0, 1, 2].some(step => !record.confirmedSteps!.includes(step))) throw new HttpError(422, "Confirm the current PO, PI and LC/TT steps before finalizing cost.");
+      if (record.confirmedSteps !== undefined && row.status !== "Costing") throw new HttpError(409, "Mark Costing before finalizing the landed-cost snapshot.");
       const preview = calculateLandedCost(row.id, record.items, record.costs);
       if (preview.validationErrors.length) throw new HttpError(422, preview.validationErrors.join(" "));
       const version = (record.snapshotHistory?.at(-1)?.version ?? 0) + 1;
@@ -182,6 +188,8 @@ export function createImportRouter(ctx: Context) {
       const user = await lockActor(tx, identity(res), "import", "edit");
       const row = await lockImport(tx, String(req.params.id));
       const allowed: Record<string, string[]> = { "LC/TT Opened": ["In Production"], "In Production": ["Shipped"], "Shipped": ["At Port"], "At Port": ["Costing"], "Received": ["Closed"] };
+      const record = await loadImport(tx, row.id);
+      if (status !== "Cancelled" && record.confirmedSteps !== undefined && [0, 1, 2].some(step => !record.confirmedSteps!.includes(step))) throw new HttpError(422, "Confirm the current PO, PI and LC/TT steps first.");
       if (status === "Cancelled") {
         if (row.currentSnapshotVersion !== null || ["Received", "Partially Received", "Closed", "Cancelled"].includes(row.status)) throw new HttpError(409, "Posted/terminal imports cannot be cancelled.");
       } else if (!allowed[row.status]?.includes(status)) throw new HttpError(409, "This milestone transition is not allowed.");
@@ -190,6 +198,22 @@ export function createImportRouter(ctx: Context) {
       await audit(tx, user.id, "Import milestone changed", "Import", row.id, { from: row.status, to: status });
     });
     res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Milestone updated" });
+  });
+  router.post("/imports/:id/confirm-step", async (req, res) => {
+    const { step } = z.object({ step: z.number().int().min(0).max(2) }).strict().parse(req.body);
+    await ctx.db.transaction(async tx => {
+      const user = await lockActor(tx, identity(res), "import", "edit");
+      const row = await lockImport(tx, String(req.params.id), true);
+      const record = await loadImport(tx, row.id);
+      const workflow = importWorkflow(record);
+      const target = workflow.steps[step];
+      if (target.reasons.length) throw new HttpError(422, target.reasons.join(" "));
+      if (record.confirmedSteps?.includes(step)) return;
+      // Preserve inferred progress for pre-guided records when their first confirmation is saved.
+      const inherited = record.confirmedSteps === undefined ? [0, 1, 2].filter(index => workflow.steps[index].completed) : [];
+      for (const index of new Set([...inherited, step])) await audit(tx, user.id, "Import stage confirmed", "Import", row.id, { step: index, fingerprint: digest(importConfirmationSource(record, index)) });
+    });
+    res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Saved import stage confirmed" });
   });
   router.delete("/imports/:id", async (req, res) => {
     await ctx.db.transaction(async (tx) => {

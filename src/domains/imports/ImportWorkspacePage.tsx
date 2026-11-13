@@ -4,10 +4,11 @@ import {
   AlertTriangle,
   Archive,
   ArrowLeft,
+  ArrowUp,
   Banknote,
-  Boxes,
   Calculator,
   CircleX,
+  Check,
   FileText,
   Eye,
   LockKeyhole,
@@ -73,17 +74,15 @@ import { hasCapability, hasEffectivePermission } from "../../lib/permissions/mat
 import { useToastStore } from "../../lib/ui/toast";
 
 import { formatMoney as formatCurrency, formatQuantity as formatNumber } from "../../utils/precise";
+import { importStepActions, importSteps, importWorkflow } from "./workflow";
 
-const milestones = ["Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port", "Costing", "Cost Finalized", "Partially Received", "Received"];
 const Decimal = DecimalJs.clone({ precision: 48, rounding: DecimalJs.ROUND_HALF_UP });
 
-function milestoneIndex(status: string) {
-  if (status === "Closed") return milestones.length - 1;
-  if (status === "Cancelled") return -1;
-  return Math.max(0, milestones.indexOf(status));
-}
+type ActionTask = { run: () => Promise<unknown>; success: string; stage?: number | null };
 
-type ActionTask = { run: () => Promise<unknown>; success: string; stage?: number };
+function scrollToImportSection(id: string) {
+  requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }));
+}
 
 export default function ImportWorkspacePage() {
   const { importId = "" } = useParams();
@@ -101,23 +100,32 @@ export default function ImportWorkspacePage() {
   const [viewingDocument, setViewingDocument] = useState<DocumentRecord | null>(null);
   const [extraction, setExtraction] = useState<AIDocumentExtraction | null>(null);
   const [selectedStage, setSelectedStage] = useState<number | null>(null);
+  const [editingStage, setEditingStage] = useState(0);
 
   const recordQuery = useQuery({ queryKey: ["import", importId], queryFn: () => importService.get(importId), enabled: Boolean(importId) });
   const receiptsQuery = useQuery({ queryKey: ["import-receipts", importId], queryFn: () => importService.receipts(importId), enabled: Boolean(importId) });
   const productsQuery = useQuery({ queryKey: ["products"], queryFn: settingsService.products });
+  const receivingReadiness = useQuery({ queryKey: ["import-receiving-readiness", importId], queryFn: () => importService.receivingReadiness(importId), enabled: Boolean(importId) && recordQuery.data?.costingStatus === "Finalized" && hasEffectivePermission(session?.user, "inventory", "post") });
 
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ["import", importId] });
-    void queryClient.invalidateQueries({ queryKey: ["import-receipts", importId] });
-    void queryClient.invalidateQueries({ queryKey: ["imports"] });
-    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    void queryClient.invalidateQueries({ queryKey: ["inventory"] });
-  };
+  const refresh = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["import", importId] }),
+    queryClient.invalidateQueries({ queryKey: ["import-receipts", importId] }),
+    queryClient.invalidateQueries({ queryKey: ["imports"] }),
+    queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+    queryClient.invalidateQueries({ queryKey: ["inventory"] }),
+    queryClient.invalidateQueries({ queryKey: ["import-receiving-readiness", importId] })
+  ]);
   const action = useMutation({
     mutationFn: (task: ActionTask) => task.run(),
-    onSuccess: (_data, task) => {
-      refresh();
-      if (task.stage !== undefined) setSelectedStage(task.stage);
+    onSuccess: async (_data, task) => {
+      if (_data && typeof _data === "object" && "draftReference" in _data && "items" in _data) queryClient.setQueryData(["import", importId], _data);
+      await refresh();
+      if (task.stage !== undefined) {
+        setSelectedStage(task.stage);
+        const fresh = queryClient.getQueryData<ImportCase>(["import", importId]);
+        const next = task.stage ?? (fresh ? importWorkflow(fresh, hasCapability(session?.user, "view_sensitive_cost")).currentStep : undefined);
+        if (next !== undefined) scrollToImportSection(`import-step-${next}`);
+      }
       setModal(null);
       setEditingItem(undefined);
       setEditingCost(undefined);
@@ -126,7 +134,7 @@ export default function ImportWorkspacePage() {
       setExtraction(null);
       pushToast({ kind: "success", title: task.success });
     },
-    onError: (error) => { if (!modal || modal === "reopen") pushToast({ kind: "error", title: "Action could not be completed", message: error instanceof Error ? error.message : undefined }); }
+    onError: (error) => { if (modal === "receive") void queryClient.invalidateQueries({ queryKey: ["import-receiving-readiness", importId] }); if (!modal || modal === "reopen") pushToast({ kind: "error", title: "Action could not be completed", message: error instanceof Error ? error.message : undefined }); }
   });
   const previewMutation = useMutation({
     mutationFn: () => importService.preview(importId),
@@ -150,16 +158,38 @@ export default function ImportWorkspacePage() {
   const canSeeCost = hasCapability(session?.user, "view_sensitive_cost");
   const canEditCost = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "edit_sensitive_cost") && !locked && !terminal;
   const canFinalize = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "finalize_landed_cost") && (!foundationMode || session?.user.role === "Super Admin") && !locked && !terminal;
-  const canReopen = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "reopen_landed_cost") && (!foundationMode || session?.user.role === "Super Admin") && locked && receipts.length === 0;
+  const canReopen = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "reopen_landed_cost") && (!foundationMode || session?.user.role === "Super Admin") && locked && !receiptsQuery.isPending && !receiptsQuery.isError && receipts.length === 0;
   const canReceive = hasEffectivePermission(session?.user, "inventory", "post") && record.costingStatus === "Finalized" && record.warehouseStatus !== "Received";
   const result = record.snapshot ?? preview;
-  const currentMilestone = milestoneIndex(record.status);
-  const stage = selectedStage ?? Math.max(0, currentMilestone);
-  const nextOperationalStatus = record.status === "LC/TT Opened" ? "In Production" : record.status === "In Production" ? "Shipped" : record.status === "Shipped" ? "At Port" : record.status === "At Port" ? "Costing" : null;
+  const workflow = importWorkflow(record, canSeeCost);
+  const stage = selectedStage ?? workflow.currentStep;
   const canCancel = canEdit && ["Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port", "Costing"].includes(record.status);
-  const canClose = hasEffectivePermission(session?.user, "import", "edit") && record.status === "Received";
-  const logisticsTitle = ["LC / TT", "Production Follow-up", "Shipment"][stage - 2] ?? "Shipment";
-  const logisticsEditLabel = stage === 2 ? "Edit payment" : stage === 3 ? "Edit production" : "Edit shipment";
+  const mayMark = (index: number) => index < 7 ? canEdit : index === 7 ? canFinalize : index === 8 ? hasEffectivePermission(session?.user, "inventory", "post") && !terminal : hasEffectivePermission(session?.user, "import", "edit") && !terminal;
+  const blockers = (index: number) => [...workflow.steps[index].reasons, ...(index === 7 && !result ? ["Generate and review the landed-cost preview before finalizing."] : []), ...(index === 8 && receiptsQuery.isError ? ["Reload warehouse receipt history before posting."] : [])];
+  const setupUrl = `/backend/accounts/ledger?view=mapping&returnTo=${encodeURIComponent(`/backend/imports/${record.id}`)}`;
+  const markStep = (index: number) => {
+    setSelectedStage(index);
+    if (index < 3) return action.mutate({ run: () => importService.confirmStep(record.id, index), success: `${importSteps[index]} confirmed`, stage: null });
+    const transitions = { 3: "In Production", 4: "Shipped", 5: "At Port", 6: "Costing" } as const;
+    if (index >= 3 && index <= 6) return action.mutate({ run: () => importService.transition(record.id, transitions[index as 3 | 4 | 5 | 6]), success: `Import moved to ${transitions[index as 3 | 4 | 5 | 6]}`, stage: null });
+    if (index === 7) return action.mutate({ run: () => importService.finalize(record.id), success: "Landed cost finalized and locked", stage: null });
+    if (index === 8) { action.reset(); setModal("receive"); }
+    if (index === 9) setPendingTransition("Closed");
+  };
+  const logisticsTitle = ["LC / TT", "Production Follow-up", "Shipment"][editingStage - 2] ?? "Shipment";
+  const selectStep = (index: number) => { setSelectedStage(index); action.reset(); scrollToImportSection(`import-step-${index}`); };
+  const stepFooter = (index: number) => {
+    const entry = workflow.steps[index], reasons = blockers(index);
+    return <div className="border-t border-blue-100 bg-blue-50/40 p-4">
+      {action.isError && !modal && stage === index ? <ErrorBlock error={action.error} title="Import action could not be completed" /> : null}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">{!entry.completed && reasons.length ? <ul className="list-inside list-disc text-xs leading-5 text-amber-900">{(stage === index || workflow.currentStep === index ? reasons : reasons.slice(0, 1)).map(reason => <li key={reason}>{reason}</li>)}</ul> : null}</div>
+        {entry.completed ? <Button disabled icon={<Check className="h-4 w-4" />}>Completed</Button> : mayMark(index) ? <Button variant="primary" icon={<Check className="h-4 w-4" />} disabled={action.isPending || reasons.length > 0 || index === 8 && (receiptsQuery.isPending || receivingReadiness.isPending || receivingReadiness.isError || !receivingReadiness.data?.ready)} onClick={() => markStep(index)}>{importStepActions[index]}</Button> : <span className="text-xs text-slate-600">{terminal || locked && index < 8 ? "Read-only section" : "Assigned role approval or posting authority required"}</span>}
+      </div>
+    </div>;
+  };
+  const sectionProps = (index: number) => ({ id: `import-step-${index}`, alwaysOpen: true, highlighted: stage === index, current: workflow.currentStep === index && !terminal, footer: stepFooter(index), onActivate: () => setSelectedStage(index) });
+  const backToSteps = <Button variant="ghost" icon={<ArrowUp className="h-4 w-4" />} title="Back to import steps" aria-label="Back to import steps" onClick={() => scrollToImportSection("import-steps-navigation")} />;
   const recordedActivity = [
     { id: "created", date: record.createdAt, event: "Import created", reference: record.draftReference, by: "" },
     ...record.documents.map((document) => ({ id: `document-${document.id}`, date: document.uploadedAt, event: "Document attached", reference: document.name, by: document.uploadedBy })),
@@ -194,16 +224,13 @@ export default function ImportWorkspacePage() {
             {!terminal && hasEffectivePermission(session?.user, "import", "edit") ? <Button icon={<Paperclip className="h-4 w-4" />} onClick={() => { action.reset(); setSelectedStage(5); setModal("document"); }}>Attach Document</Button> : null}
             {foundationMode ? <Button icon={<Warehouse className="h-4 w-4" />} onClick={()=>navigate(`/backend/supplier-claims?import=${encodeURIComponent(record.id)}`)}>Supplier Claims</Button> : null}
             {canCancel ? <Button variant="danger" icon={<CircleX className="h-4 w-4" />} disabled={action.isPending} onClick={() => setPendingTransition("Cancelled")}>Cancel Case</Button> : null}
-            {canEdit && nextOperationalStatus ? <Button variant="primary" icon={nextOperationalStatus === "Costing" ? <Calculator className="h-4 w-4" /> : <Ship className="h-4 w-4" />} disabled={action.isPending} onClick={() => action.mutate({ run: () => importService.transition(record.id, nextOperationalStatus), success: `Import moved to ${nextOperationalStatus}`, stage: milestoneIndex(nextOperationalStatus) })}>Mark {nextOperationalStatus}</Button> : null}
-            {canClose ? <Button variant="primary" icon={<Archive className="h-4 w-4" />} disabled={action.isPending} onClick={() => setPendingTransition("Closed")}>Close Case</Button> : null}
             {canSeeCost && (foundationMode ? record.snapshot : result) && hasEffectivePermission(session?.user, "print", "view") ? <Button icon={<Printer className="h-4 w-4" />} onClick={() => navigate("/app/print/import-cost/" + record.id)}>Print Cost</Button> : null}
             <StatusBadge status={record.status} />
           </>
         }
       />
 
-      <LifecycleProgress label="Import stages" selectedId={milestones[stage]} onSelect={(id) => { setSelectedStage(milestones.indexOf(id)); action.reset(); }} steps={milestones.map((step, index) => ({ id: step, label: ["PO / Draft", "PI & Products", "LC / TT", "Production", "Shipment", "Documents", "Costs & Allocation", "Landed Cost", "Receiving", "Activity & Closure"][index], state: record.status === "Cancelled" ? "cancelled" : currentMilestone === index ? "current" : currentMilestone > index ? "complete" : "pending" }))} />
-      {action.isError && !modal ? <ErrorBlock error={action.error} title="Import action could not be completed" /> : null}
+      <div id="import-steps-navigation" className="scroll-mt-24"><LifecycleProgress wrap label="Import stages" selectedId={String(stage)} onSelect={id => selectStep(Number(id))} steps={workflow.steps.map((entry, index) => ({ id: String(index), label: entry.label, detail: index === workflow.currentStep && !terminal ? "Current step" : undefined, state: record.status === "Cancelled" ? "cancelled" : entry.completed ? "complete" : index === workflow.currentStep ? "current" : "pending" }))} /></div>
 
       {locked ? (
         <div className="flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
@@ -214,20 +241,25 @@ export default function ImportWorkspacePage() {
       {locked && receipts.length ? <div className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900"><Warehouse className="mt-0.5 h-4 w-4 shrink-0" /><p><strong>Receipt-backed valuation is protected.</strong> This snapshot cannot be reopened because warehouse stock already inherited it. A future formal valuation adjustment must preserve sold and remaining stock history.</p></div> : null}
 
       <SectionAccordion
-        hidden={stage > 1}
-        title={stage === 0 ? "Purchase Order" : "PI & Products"}
-        subtitle="PO and PI details with approved product variants"
+        {...sectionProps(0)}
+        title="Purchase Order"
+        subtitle="Supplier and purchase commitment"
         icon={PackagePlus}
-        status={<span className="text-xs font-bold text-slate-500">{record.items.length} lines</span>}
-        actions={canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => setModal("commercial")} aria-label="Edit commercial data" title="Edit commercial data" /> : undefined}
+        actions={<div className="flex items-center">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingStage(0); setModal("commercial"); }} aria-label="Edit purchase order" title="Edit purchase order" /> : null}{backToSteps}</div>}
       >
         <dl className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <KeyValue label="Draft Reference" value={record.draftReference} />
           <KeyValue label="Supplier" value={record.supplierName} />
-          <KeyValue label="Purchase Order" value={record.poNumber + " · " + record.poDate} />
-          <KeyValue label="Proforma Invoice" value={record.piNumber ? `${record.piNumber} · ${record.piDate ?? "Date pending"}` : "Pending supplier PI"} />
+          <KeyValue label="PO Number" value={record.poNumber} />
+          <KeyValue label="PO Date" value={record.poDate} />
+          <KeyValue label="Expected Shipment" value={record.expectedShipmentDate} />
+          <KeyValue label="Notes" value={record.notes} />
         </dl>
-        <div hidden={stage === 0} className="border-t border-slate-200">
+      </SectionAccordion>
+
+      <SectionAccordion {...sectionProps(1)} title="PI & Products" subtitle="Supplier PI and imported product lines" icon={PackagePlus} status={<span className="text-xs font-bold text-slate-500">{record.items.length} lines</span>} actions={<div className="flex items-center">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingStage(1); setModal("commercial"); }} aria-label="Edit PI details" title="Edit PI details" /> : null}{backToSteps}</div>}>
+        <dl className="grid gap-4 p-4 sm:grid-cols-2"><KeyValue label="PI Number" value={record.piNumber || "Pending supplier PI"} /><KeyValue label="PI Date" value={record.piDate} /></dl>
+        <div className="border-t border-slate-200">
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <div><h3 className="text-sm font-bold text-slate-900">Imported products</h3><p className="text-xs text-slate-500">FOB, quantity and CBM are allocation bases.</p></div>
             {canEdit ? <Button icon={<Plus className="h-4 w-4" />} onClick={() => { setEditingItem(undefined); setModal("item"); }}>Add Product</Button> : null}
@@ -266,23 +298,17 @@ export default function ImportWorkspacePage() {
         </div>
       </SectionAccordion>
 
-      <SectionAccordion
-        hidden={stage < 2 || stage > 4}
-        title={logisticsTitle}
-        subtitle="Payment and physical shipment milestones on the same import case"
-        icon={Ship}
-        actions={canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => setModal("shipment")} aria-label={logisticsEditLabel} title={logisticsEditLabel} /> : undefined}
-      >
-        <ImportLogisticsSummary record={record} stage={stage} canSeeCost={canSeeCost} />
-      </SectionAccordion>
+      {[{ index: 2, title: "LC / TT", subtitle: "Payment reference and exchange-rate snapshot", edit: "Edit payment" }, { index: 3, title: "Production Follow-up", subtitle: "Supplier production status and target timing", edit: "Edit production" }, { index: 4, title: "Shipment", subtitle: "Commercial invoice, carrier and shipment dates", edit: "Edit shipment" }].map(section => <SectionAccordion key={section.index} {...sectionProps(section.index)} title={section.title} subtitle={section.subtitle} icon={Ship} actions={<div className="flex items-center">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingStage(section.index); setModal("shipment"); }} aria-label={section.edit} title={section.edit} /> : null}{backToSteps}</div>}>
+        <ImportLogisticsSummary record={record} stage={section.index} canSeeCost={canSeeCost} />
+      </SectionAccordion>)}
 
       <SectionAccordion
-        hidden={stage !== 5}
+        {...sectionProps(5)}
         title="Import Documents"
         subtitle="Shipment documents, certificates and supporting attachments"
         icon={FileText}
         status={<span className="text-xs font-bold text-slate-500">{record.documents.length} files</span>}
-        actions={!terminal && hasEffectivePermission(session?.user, "import", "edit") ? <Button variant="ghost" icon={<Upload className="h-4 w-4" />} onClick={() => setModal("document")} aria-label="Attach document" title="Attach document" /> : undefined}
+        actions={<div className="flex items-center">{!terminal && hasEffectivePermission(session?.user, "import", "edit") ? <Button variant="ghost" icon={<Upload className="h-4 w-4" />} onClick={() => setModal("document")} aria-label="Attach document" title="Attach document" /> : null}{backToSteps}</div>}
       >
         <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
           {record.documents.map((document) => (
@@ -296,12 +322,12 @@ export default function ImportWorkspacePage() {
       </SectionAccordion>
 
       <SectionAccordion
-        hidden={stage !== 6}
+        {...sectionProps(6)}
         title="Costs & Allocation"
         subtitle="Dynamic cost rows with an explicit allocation basis"
         icon={Banknote}
         status={<StatusBadge status={record.costingStatus} />}
-        actions={canEditCost ? <Button variant="ghost" icon={<Plus className="h-4 w-4" />} onClick={() => { setEditingCost(undefined); setModal("cost"); }}>Add Cost</Button> : undefined}
+        actions={<div className="flex items-center">{canEditCost ? <Button variant="ghost" icon={<Plus className="h-4 w-4" />} onClick={() => { setEditingCost(undefined); setModal("cost"); }}>Add Cost</Button> : null}{backToSteps}</div>}
       >
         {!canSeeCost ? (
           <div className="flex items-start gap-3 bg-amber-50 p-4 text-sm text-amber-900"><LockKeyhole className="mt-0.5 h-5 w-5 shrink-0" /><p><strong>Sensitive cost values are restricted for {session?.user.role}.</strong> Shipment and receiving status remain available without exposing supplier price, landed cost or profit.</p></div>
@@ -336,19 +362,19 @@ export default function ImportWorkspacePage() {
             </TableFrame></div>
             {!record.costs.length ? <p className="p-4 text-sm text-slate-500">No landed-cost rows entered. Operating rent, salary, utilities and TA/DA belong in Expenses & Accounts.</p> : null}
             <div className="flex justify-end border-t border-slate-200 p-4">
-              <Button variant="primary" icon={<Calculator className="h-4 w-4" />} disabled={previewMutation.isPending || action.isPending || !record.items.length || !record.costs.length} onClick={() => { setSelectedStage(7); if (!record.snapshot) previewMutation.mutate(); }}>{locked ? "View Landed Cost" : "Review Landed Cost"}</Button>
+              <Button variant="primary" icon={<Calculator className="h-4 w-4" />} disabled={previewMutation.isPending || action.isPending || !record.items.length} onClick={() => { selectStep(7); if (!record.snapshot) previewMutation.mutate(); }}>{locked ? "View Landed Cost" : "Review Landed Cost"}</Button>
             </div>
           </>
         )}
       </SectionAccordion>
 
       <SectionAccordion
-        hidden={stage !== 7}
+        {...sectionProps(7)}
         title="Landed-Cost Result"
         subtitle="Two-decimal cost allocation with exact totals"
         icon={Calculator}
         status={record.snapshot ? <span className="rounded bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">Snapshot v{record.snapshot.version}</span> : undefined}
-        actions={canSeeCost ? <Button variant="ghost" icon={<Calculator className="h-4 w-4" />} onClick={() => previewMutation.mutate()} disabled={previewMutation.isPending || !record.items.length || !record.costs.length}>Preview</Button> : undefined}
+        actions={<div className="flex items-center">{canSeeCost ? <Button variant="ghost" icon={<Calculator className="h-4 w-4" />} onClick={() => previewMutation.mutate()} disabled={previewMutation.isPending || !record.items.length}>Preview</Button> : null}{backToSteps}</div>}
       >
         {!canSeeCost ? (
           <div className="p-4 text-sm text-slate-600">Finalization state: <strong>{record.costingStatus}</strong>. Detailed costs and product margins are owner-only.</div>
@@ -384,7 +410,6 @@ export default function ImportWorkspacePage() {
               <p className="max-w-2xl text-xs leading-5 text-slate-500">Customs duty is entered as the final assessed amount for each product. The ERP does not invent HS-code duty, VAT or AIT formulas.</p>
               <div className="flex gap-2">
                 {canReopen ? <Button icon={<RotateCcw className="h-4 w-4" />} onClick={() => setModal("reopen")}>Reopen with Reason</Button> : null}
-                {canFinalize ? <Button variant="primary" icon={<LockKeyhole className="h-4 w-4" />} disabled={Boolean(result.validationErrors.length) || action.isPending} onClick={() => action.mutate({ run: () => importService.finalize(record.id), success: "Landed cost finalized and locked" })}>Finalize Snapshot</Button> : null}
               </div>
             </div>
           </div>
@@ -394,14 +419,18 @@ export default function ImportWorkspacePage() {
       </SectionAccordion>
 
       <SectionAccordion
-        hidden={stage !== 8}
+        {...sectionProps(8)}
         title="Warehouse Receiving"
         subtitle="Receiving is unlocked only after landed-cost finalization"
         icon={Warehouse}
         status={<StatusBadge status={record.warehouseStatus} />}
-        actions={canReceive ? <Button variant="primary" icon={<Boxes className="h-4 w-4" />} onClick={() => setModal("receive")}>Receive to Warehouse</Button> : undefined}
+        actions={backToSteps}
       >
         {record.costingStatus !== "Finalized" ? <div className="flex items-start gap-3 bg-amber-50 p-4 text-sm text-amber-900"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" /><p>Warehouse receiving remains locked until the authorized owner finalizes landed cost.</p></div> : null}
+        {canReceive && receivingReadiness.isPending ? <LoadingBlock label="Checking accounting setup" /> : null}
+        {canReceive && receivingReadiness.isError ? <ErrorBlock error={receivingReadiness.error} onRetry={() => void receivingReadiness.refetch()} /> : null}
+        {canReceive && receivingReadiness.data && !receivingReadiness.data.ready ? <AccountingSetupNotice message={receivingReadiness.data.message} canConfigure={receivingReadiness.data.canConfigure} onSetup={() => navigate(setupUrl)} /> : null}
+        {receiptsQuery.isError ? <ErrorBlock error={receiptsQuery.error} onRetry={() => void receiptsQuery.refetch()} /> : null}
         <div className="grid gap-3 p-4">
           {receipts.map((receipt) => (
             <article className="rounded-md border border-slate-200" key={receipt.id}>
@@ -409,16 +438,16 @@ export default function ImportWorkspacePage() {
               <div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-3">{receipt.lines.map((line) => <div className="border-l-2 border-emerald-500 pl-3 text-sm" key={line.importItemId + line.batchNumber}><strong className="block text-slate-900">{line.productName}</strong><span className="block text-xs text-slate-500">Received {formatNumber(line.quantityReceived)} · Rejected {formatNumber(line.quantityRejected)}</span><span className="block text-xs text-slate-500">Lot {line.lotNumber} · {line.location}</span></div>)}</div>
             </article>
           ))}
-          {!receipts.length ? <p className="text-sm text-slate-500">No warehouse receipt has been posted against this import case.</p> : null}
+          {!receipts.length && !receiptsQuery.isPending && !receiptsQuery.isError ? <p className="text-sm text-slate-500">No warehouse receipt has been posted against this import case.</p> : null}
         </div>
       </SectionAccordion>
 
-      <SectionAccordion hidden={stage !== 9} title="Activity & Closure" subtitle="Recorded case events and completion status" icon={Archive} status={<StatusBadge status={record.status} />}>
+      <SectionAccordion {...sectionProps(9)} title="Activity & Closure" subtitle="Recorded case events and completion status" icon={Archive} status={<StatusBadge status={record.status} />} actions={backToSteps}>
         <dl className="grid gap-4 border-b border-slate-200 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <KeyValue label="Import reference" value={record.primaryReference} />
           <KeyValue label="Landed cost" value={record.costingStatus} />
           <KeyValue label="Warehouse status" value={record.warehouseStatus} />
-          <KeyValue label="Posted receipts" value={String(receipts.length)} />
+          <KeyValue label="Posted receipts" value={receiptsQuery.isError ? "Unavailable" : String(receipts.length)} />
         </dl>
         <ol className="divide-y divide-slate-100">
           {recordedActivity.map((entry) => <li key={entry.id} className="grid gap-2 p-4 sm:grid-cols-[140px_1fr]">
@@ -426,15 +455,15 @@ export default function ImportWorkspacePage() {
             <div className="min-w-0"><strong className="block text-sm text-slate-900">{entry.event}</strong><span className="block break-words text-sm text-slate-600">{entry.reference}</span>{entry.by ? <small className="block text-slate-500">{entry.by}</small> : null}</div>
           </li>)}
         </ol>
-        <div className="flex justify-end border-t border-slate-200 p-4"><Button icon={<Warehouse className="h-4 w-4" />} onClick={() => setSelectedStage(8)}>View Warehouse Receipts</Button></div>
+        <div className="flex justify-end border-t border-slate-200 p-4"><Button icon={<Warehouse className="h-4 w-4" />} onClick={() => selectStep(8)}>View Warehouse Receipts</Button></div>
       </SectionAccordion>
 
-      {modal === "commercial" ? <Modal open title="Edit commercial data" subtitle="Update the header without creating another import record." onClose={() => setModal(null)}>{action.isError ? <ErrorBlock error={action.error} title="Commercial data could not be saved" /> : null}<CommercialEditor record={record} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => importService.update(record.id, payload), success: "Commercial data updated" })} /></Modal> : null}
-      {modal === "shipment" ? <Modal open title={logisticsTitle} onClose={() => setModal(null)}><ShipmentEditor record={record} stage={stage} error={action.error} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => importService.update(record.id, payload), success: `${logisticsTitle} details updated` })} /></Modal> : null}
+      {modal === "commercial" ? <Modal open title={editingStage === 1 ? "Edit PI details" : "Edit purchase order"} subtitle="Update the same import record." onClose={() => setModal(null)}>{action.isError ? <ErrorBlock error={action.error} title="Commercial data could not be saved" /> : null}<CommercialEditor record={record} busy={action.isPending} requirePi={editingStage === 1} onSubmit={(payload) => action.mutate({ run: () => importService.update(record.id, payload), success: "Commercial data updated" })} /></Modal> : null}
+      {modal === "shipment" ? <Modal open title={logisticsTitle} onClose={() => setModal(null)}><ShipmentEditor record={record} stage={editingStage} error={action.error} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => importService.update(record.id, payload), success: `${logisticsTitle} details updated` })} /></Modal> : null}
       {modal === "item" ? <Modal open title={editingItem ? "Edit imported product" : "Add imported product"} subtitle="Choose a product variant and enter its FOB, quantity and CBM basis." onClose={() => { setModal(null); setEditingItem(undefined); }} width="max-w-3xl"><ItemEditor error={action.error} record={record} products={products} item={editingItem} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingItem ? importService.updateItem(record.id, editingItem.id, payload) : importService.addItem(record.id, payload), success: editingItem ? "Product line updated" : "Product line added" })} /></Modal> : null}
       {modal === "cost" ? <Modal open title={editingCost ? "Edit cost row" : "Add import cost"} subtitle="Every common or transport cost requires an explicit allocation decision." onClose={() => { setModal(null); setEditingCost(undefined); }} width="max-w-4xl">{action.isError ? <ErrorBlock error={action.error} title="Cost row could not be saved" /> : null}<CostEditor record={record} cost={editingCost} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => editingCost ? importService.updateCost(record.id, editingCost.id, payload) : importService.addCost(record.id, payload), success: editingCost ? "Cost row updated" : "Cost row added" })} /></Modal> : null}
       {modal === "document" ? <Modal open title="Attach import document" subtitle="Attach a PDF, image, spreadsheet or document to this import." onClose={() => setModal(null)}>{action.isError ? <ErrorBlock error={action.error} title="Document could not be attached" /> : null}<DocumentEditor busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => importService.addDocument(record.id, payload), success: "Document attached and ready to view" })} /></Modal> : null}
-      {modal === "receive" ? <Modal open title="Receive to warehouse" subtitle="Product and finalized cost are inherited. Enter batch traceability and accepted/rejected quantities." onClose={() => setModal(null)} width="max-w-5xl">{action.isError ? <ErrorBlock error={action.error} title="Receipt could not be posted" /> : null}<ReceiptEditor record={record} receipts={receipts} busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => importService.receive(record.id, payload), success: "Warehouse receipt posted and stock batches created" })} /></Modal> : null}
+      {modal === "receive" ? <Modal open title="Receive to warehouse" subtitle="Product and finalized cost are inherited. Enter batch traceability and accepted/rejected quantities." onClose={() => setModal(null)} width="max-w-5xl">{action.isError ? <ErrorBlock error={action.error} title="Receipt could not be posted" /> : null}{receivingReadiness.isError ? <ErrorBlock error={receivingReadiness.error} onRetry={() => void receivingReadiness.refetch()} /> : receivingReadiness.data?.ready ? <ReceiptEditor record={record} receipts={receipts} busy={action.isPending} onSubmit={payload => action.mutate({ run: () => importService.receive(record.id, payload), success: "Warehouse receipt posted and stock batches created", stage: null })} /> : receivingReadiness.data ? <AccountingSetupNotice message={receivingReadiness.data.message} canConfigure={receivingReadiness.data.canConfigure} onSetup={() => { setModal(null); navigate(setupUrl); }} /> : <LoadingBlock label="Checking posting prerequisites" />}</Modal> : null}
       {modal === "reopen" ? <ReopenModal busy={action.isPending} onClose={() => setModal(null)} onSubmit={(reason) => action.mutate({ run: () => importService.reopen(record.id, reason), success: "Landed cost reopened with an audit reason" })} /> : null}
       {extraction ? <Modal open title="AI Extracted Fields" subtitle={`${extraction.documentName} | review required; nothing is overwritten automatically.`} onClose={() => setExtraction(null)} width="max-w-3xl"><AIDocumentExtractReview extraction={extraction} busy={action.isPending} onApply={applyExtractedFields} /></Modal> : null}
       <DocumentViewer document={viewingDocument} onClose={() => setViewingDocument(null)} />
@@ -447,6 +476,10 @@ export default function ImportWorkspacePage() {
 }
 
 
+
+function AccountingSetupNotice({ message, canConfigure, onSetup }: { message: string; canConfigure: boolean; onSetup: () => void }) {
+  return <div role="status" className="border-l-4 border-amber-500 bg-amber-50 p-4 text-sm text-amber-950"><strong>Accounting setup required</strong><p className="mt-1">{message}</p>{canConfigure ? <Button className="mt-3" variant="primary" icon={<Banknote className="h-4 w-4" />} onClick={onSetup}>Set Up Accounting</Button> : <p className="mt-2 text-xs">Contact your Super Admin to approve the company posting mapping.</p>}</div>;
+}
 
 function CostEditor({ record, cost, busy, onSubmit }: { record: ImportCase; cost?: ImportCostLine; busy: boolean; onSubmit: (payload: Omit<ImportCostLine, "id" | "enteredBy" | "createdAt"> & { attachmentUpload?: DocumentUpload }) => void }) {
   const client = useQueryClient(); const actor = useAuthStore((s) => s.session?.user); const [adding, setAdding] = useState(false);
@@ -547,6 +580,22 @@ function ReceiptFields({ record, receipts, busy, onSubmit, locations }: { record
   const [error, setError] = useState("");
   const [rows, setRows] = useState(() => Object.fromEntries(record.items.map((item) => [item.id, { received: "", rejected: "0", lot: "", batch: "", manufacturing: "", expiry: "", warehouse: foundationMode ? "Main Warehouse" : "MIPRO Main Warehouse", location: "" }])));
   const update = (id: string, key: string, value: string) => { if (foundationMode && key === "warehouse") return; setRows((current) => ({ ...current, [id]: { ...current[id], [key]: value } })); };
+  const issues: string[] = [];
+  let hasQuantity = false;
+  if (!date || date < record.poDate || date > businessDate()) issues.push("Receiving date must be between the PO date and today.");
+  for (const item of record.items) {
+    const row = rows[item.id], remaining = new Decimal(item.quantity).minus(processed[item.id] ?? "0");
+    if (remaining.lte(0)) continue;
+    if (![row.received || "0", row.rejected || "0"].every(value => isDecimalInput(value, 4))) { issues.push(`${item.productCode}: enter valid received/rejected quantities.`); continue; }
+    const accepted = new Decimal(row.received || "0"), total = accepted.plus(row.rejected || "0");
+    if (total.gt(0)) hasQuantity = true;
+    if (total.gt(remaining)) issues.push(`${item.productCode}: received plus rejected exceeds the remaining quantity.`);
+    if (accepted.gt(0)) {
+      if (!row.lot.trim() || !row.batch.trim() || !row.location.trim()) issues.push(`${item.productCode}: enter lot, batch and BIN / rack location.`);
+      if (!row.manufacturing || !row.expiry || row.manufacturing > date || row.expiry <= row.manufacturing || row.expiry <= date) issues.push(`${item.productCode}: manufacturing must be on/before receipt; expiry must be after receipt and manufacturing.`);
+    }
+  }
+  if (!hasQuantity) issues.push("Enter a received or rejected quantity for at least one product.");
   const submit = (event: FormEvent) => {
     event.preventDefault();
     for (const item of record.items) {
@@ -556,12 +605,13 @@ function ReceiptFields({ record, receipts, busy, onSubmit, locations }: { record
     }
     const lines = record.items.flatMap((item) => {
       const row = rows[item.id];
-      if (Number(row.received || 0) + Number(row.rejected || 0) <= 0) return [];
+        if (new Decimal(row.received || "0").plus(row.rejected || "0").lte(0)) return [];
       return [{ importItemId: item.id, productId: item.productId, productName: item.productName, quantityReceived: row.received || "0", quantityRejected: row.rejected || "0", lotNumber: row.lot || "REJECTED", batchNumber: row.batch || "REJECTED", manufacturingDate: row.manufacturing, expiryDate: row.expiry, warehouse: row.warehouse, location: row.location, landedCostPerUnit: "0.00" }];
     });
     if (!lines.length) return setError("Enter a received or rejected quantity for at least one product.");
     setError("");
-    onSubmit({ receivedDate: date, lines });
+      if (issues.length) return setError(issues.join(" "));
+      onSubmit({ receivedDate: date, lines });
   };
   return <form className="grid gap-4" onSubmit={submit}>
     {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
@@ -574,13 +624,14 @@ function ReceiptFields({ record, receipts, busy, onSubmit, locations }: { record
         <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {(["received", "rejected"] as const).map((key) => <label key={key}><span className={labelClass}>{key === "received" ? "Received Qty" : "Rejected Qty"}</span><input className={inputClass} type="number" min="0" max={remaining.toFixed(4)} step="0.0001" value={row[key]} onChange={(event) => update(item.id, key, event.target.value)} /></label>)}
           {(["lot", "batch"] as const).map((key) => <label key={key}><span className={labelClass}>{key === "lot" ? "Lot Number" : "Batch Number"}</span><input className={inputClass} maxLength={200} value={row[key]} onChange={(event) => update(item.id, key, event.target.value)} required={Number(row.received) > 0} /></label>)}
-          {(["manufacturing", "expiry"] as const).map((key) => <label key={key}><span className={labelClass}>{key === "manufacturing" ? "Manufacturing Date" : "Expiry Date"}</span><input className={inputClass} type="date" value={row[key]} onChange={(event) => update(item.id, key, event.target.value)} required={Number(row.received) + Number(row.rejected) > 0} /></label>)}
+            {(["manufacturing", "expiry"] as const).map((key) => <label key={key}><span className={labelClass}>{key === "manufacturing" ? "Manufacturing Date" : "Expiry Date"}</span><input className={inputClass} type="date" value={row[key]} max={key === "manufacturing" ? date : undefined} onChange={(event) => update(item.id, key, event.target.value)} required={Number(row.received) > 0} /></label>)}
           <label><span className={labelClass}>Warehouse</span><input className={inputClass} value={row.warehouse} readOnly={foundationMode} onChange={(event) => update(item.id, "warehouse", event.target.value)} required /></label>
           <label><span className={labelClass}>BIN / Rack Location</span><input className={inputClass} list="receiving-bin-locations" value={row.location} maxLength={200} onChange={(event) => update(item.id, "location", event.target.value)} required={Number(row.received) > 0} /></label>
         </div>
       </fieldset>;
     })}</div>
-    <div className="flex justify-end"><Button type="submit" variant="primary" icon={<Warehouse className="h-4 w-4" />} disabled={busy}>Post Warehouse Receipt</Button></div>
+    {issues.length ? <ul className="list-inside list-disc text-xs leading-5 text-amber-900">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul> : null}
+    <div className="flex justify-end"><Button type="submit" variant="primary" icon={<Warehouse className="h-4 w-4" />} disabled={busy || issues.length > 0}>Post Warehouse Receipt</Button></div>
   </form>;
 }
 

@@ -3,11 +3,13 @@ import { mkdir, readFile } from "node:fs/promises";
 import { chromium } from "@playwright/test";
 import sharp from "sharp";
 import { calculateLandedCost } from "../src/domains/imports/costing.ts";
+import { ledgerStarterProposal } from "../src/domains/ledger/starter.ts";
+import { businessDate } from "../src/lib/date.ts";
 
 const origin = process.env.SMOKE_ORIGIN ?? "http://localhost:5178";
 const vercel = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
 const csp = vercel.headers.find((entry) => entry.source === "/(.*)").headers.find((header) => header.key === "Content-Security-Policy").value;
-const today = new Date().toISOString().slice(0, 10);
+const today = businessDate();
 const future = `${Number(today.slice(0, 4)) + 2}${today.slice(4)}`;
 const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#008ca8" } }).png().toBuffer();
 const user = { id: "ui-flex-admin", name: "Form Review", email: "ui@example.invalid", role: "Super Admin", status: "Active", title: "Administrator", department: "Administration", phone: "", avatarUrl: "", capabilities: [], permissionOverrides: [] };
@@ -17,10 +19,13 @@ const browser = await chromium.launch({ channel: "msedge", headless: true });
 await mkdir("artifacts/backend/flexibility", { recursive: true });
 try {
   for (const width of [1440, 390]) {
-    const context = await browser.newContext({ viewport: { width, height: 1000 } });
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: "reduce" });
     const errors = []; const supplierRows = []; const productRows = []; const optionRows = []; const importPosts = []; const patches = []; const uploads = []; const itemPatches = []; const presetRows = []; const accountRows = []; const chartRows = [];
     let invalidAmount = false; let unavailable = false; let documentAttached = false; let purchasePosted = false;
+    let ledgerReady = false;
+    const configurations = [], receiptRows = [];
     let record = { id: "ui-import", draftReference: "IMP-2026-001", primaryReference: "IMP-2026-001", supplierId: "ui-supplier", supplierName: "Review Supplier", poNumber: "PO-TEST", poDate: today, piNumber: "PI-TEST", paymentMode: "Pending", currency: "USD", exchangeRate: "0", rateDate: "", rateSource: "Pending", status: "PI Received", milestone: "PI Received", costingStatus: "Not Started", warehouseStatus: "Not Ready", items: [], costs: [], documents: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    record.confirmedSteps = []; record.status = "Draft"; record.milestone = "Draft"; record.piNumber = "";
     const importLine = () => ({ id: "ui-item", productId: productRows[0].id, productCode: productRows[0].code, productName: productRows[0].name, quantity: "1", unit: productRows[0].unit, currency: "USD", fobUnitForeign: "0", exchangeRate: "0", fobTotalBdt: "0", cbmPerCarton: "0", cartonCount: "0", totalCbm: "0", cbmMode: "CALCULATED" });
     try {
       await context.addInitScript((value) => globalThis.localStorage.setItem("mipro-erp-session", JSON.stringify(value)), session);
@@ -46,6 +51,18 @@ try {
         else if (path === "/api/sales/page") {
           const rows = url.searchParams.get("kind") === "accounts" ? accountRows.filter((a) => !url.searchParams.get("accountType") || a.type === url.searchParams.get("accountType")) : [];
           data = { rows, selected: rows.find((row) => row.id === url.searchParams.get("selectedId")) ?? null, total: rows.length, page: 1, pageSize: 25 };
+        } else if (path === "/api/ledger/status") data = { strictPosting: true, configurationId: ledgerReady ? "starter-config" : null, cutover: ledgerReady ? today : null, deferred: 0, periods: [] };
+        else if (path === "/api/ledger/configurations") data = configurations;
+        else if (path === "/api/ledger/cash-masters") data = accountRows;
+        else if (path === "/api/ledger/configurations/starter") {
+          assert.equal(body.acknowledgeDraft, true); assert.equal(ledgerReady, false);
+          const rows = ledgerStarterProposal(chartRows, accountRows).map(row => ({ ...row, id: row.existingId ?? `starter-${row.code}` }));
+          for (const row of rows) if (!row.existingId) chartRows.push({ id: row.id, code: row.code, name: row.name, kind: row.kind, active: true });
+          configurations.push({ id: "starter-config", state: "Draft", version: 1, createdBy: user.id, approvedBy: null, data: { effectiveFrom: body.effectiveFrom, proofReference: body.proofReference, mappings: rows.flatMap(row => row.role ? [{ role: row.role, accountId: row.id }] : []), cashMappings: [] } });
+          data = { id: "starter-config" }; status = 201;
+        } else if (path === "/api/ledger/configurations/starter-config/approve") {
+          assert.equal(body.version, 1); assert.ok(body.reason.length >= 5); ledgerReady = true;
+          configurations[0] = { ...configurations[0], state: "Approved", version: 2, approvedBy: user.id }; data = { id: "starter-config" };
         } else if (path === "/api/ledger/accounts") {
           if (request.method() === "POST") { chartRows.push({ id: "chart-review", active: true, ...body }); status = 201; }
           data = request.method() === "POST" ? chartRows.at(-1) : chartRows;
@@ -61,9 +78,17 @@ try {
           data = { id: path.split("/")[3] };
         } else if (path.startsWith("/api/documents/")) data = { url: `${origin}/favicon.png` };
         else if (path === "/api/imports" && request.method() === "POST") { importPosts.push(body); record = { ...record, ...body, items: [importLine()] }; data = record; status = 201; }
-        else if (path === "/api/imports/ui-import/receipts") data = [];
+        else if (path === "/api/imports/ui-import/confirm-step") { record = { ...record, confirmedSteps: [...new Set([...record.confirmedSteps, body.step])] }; data = record; }
+        else if (path === "/api/imports/ui-import/receiving-readiness") data = { ready: ledgerReady, canConfigure: true, message: ledgerReady ? "Accounting posting is configured." : "Accounting setup is incomplete. Super Admin must review and approve the posting mapping before warehouse stock can be posted." };
+        else if (path === "/api/imports/ui-import/receipts") data = receiptRows;
+        else if (path === "/api/settings/warehouse") data = { id: "main", name: "Main Warehouse", address: "Dhaka", contactPerson: "", phone: "", locations: ["A1"], active: true, version: 1 };
+        else if (path === "/api/imports/ui-import/receive") {
+          assert.equal(ledgerReady, true);
+          const receipt = { id: "ui-receipt", importId: record.id, reference: record.primaryReference, receivedDate: body.receivedDate, lines: body.lines, status: "Posted", receivedBy: user.name };
+          receiptRows.push(receipt); record = { ...record, status: "Received", milestone: "Received", warehouseStatus: "Received" }; data = receipt; status = 201;
+        }
         else if (path === "/api/imports/ui-import/transition") {
-          const allowed = { "LC/TT Opened": "In Production", "In Production": "Shipped", "Shipped": "At Port", "At Port": "Costing" };
+          const allowed = { "LC/TT Opened": "In Production", "In Production": "Shipped", "Shipped": "At Port", "At Port": "Costing", "Received": "Closed" };
           assert.equal(body.status, allowed[record.status]);
           record = { ...record, status: body.status, milestone: body.status }; data = record;
         } else if (path === "/api/imports/ui-import/cost-preview") data = calculateLandedCost(record.id, record.items, record.costs);
@@ -91,7 +116,17 @@ try {
       });
       const page = await context.newPage(); page.setDefaultTimeout(20_000); page.on("pageerror", (error) => errors.push(error.message));
       page.on("console", (message) => { if (message.type() === "error" && /Content Security Policy|Refused to connect/i.test(message.text())) errors.push(message.text()); });
-      const capture = async (name) => { assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth + 2), true, `${name}: viewport overflow`); await page.screenshot({ path: `artifacts/backend/flexibility/${name}-${width}.png`, fullPage: true }); };
+      const capture = async (name) => { assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth + 2), true, `${name}: viewport overflow`); await page.screenshot({ path: `artifacts/backend/flexibility/${name}-${width}.png`, fullPage: true }); if (["all-import-sections", "landed-cost-review", "receiving-next-action"].includes(name)) await page.screenshot({ path: `artifacts/backend/flexibility/${name}-viewport-${width}.png` }); };
+      const assertSections = async (selected) => {
+        await page.locator(`#import-step-${selected}[data-highlighted="true"]`).waitFor();
+        assert.equal(await page.locator('[id^="import-step-"][data-highlighted="true"]').count(), 1, "Only the selected section is highlighted");
+        for (let index = 0; index < 10; index++) {
+          const section = page.locator(`#import-step-${index}`);
+          assert.equal(await section.isVisible(), true, `Section ${index + 1} stays visible`);
+          assert.equal(await section.getAttribute("hidden"), null);
+          assert.equal(await section.evaluate(node => node.tagName), "SECTION", "Import sections must not collapse");
+        }
+      };
       await page.goto(`${origin}/backend/imports/new`);
       await page.getByRole("heading", { name: "Create draft import", exact: true }).waitFor();
       await page.getByRole("combobox", { name: "Supplier", exact: true }).selectOption("__add_master__");
@@ -110,21 +145,35 @@ try {
       await page.waitForResponse((r) => r.url().includes("/complete") && r.status() === 200); await capture("product-editor");
       await dialog.getByRole("button", { name: "Save", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); assert.equal(importPosts.length, 0, "Nested creation must not submit the import form");
       await page.getByLabel("PO Number", { exact: true }).fill("PO-TEST"); await page.getByRole("button", { name: "Create Draft Import", exact: true }).click();
-      await page.waitForURL("**/backend/imports/ui-import"); await page.getByRole("heading", { name: "PI & Products", exact: true }).waitFor();
+      await page.waitForURL("**/backend/imports/ui-import"); await page.getByRole("button", { name: "Mark PO Complete", exact: true }).click(); await assertSections(1);
+      assert.equal(await page.getByRole("button", { name: "Mark PI Received", exact: true }).isEnabled(), false);
       await capture("import-products");
-      await page.getByRole("button", { name: "Edit commercial data", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Edit commercial data", exact: true });
+      await page.getByRole("button", { name: "Edit purchase order", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Edit purchase order", exact: true });
       assert.equal(await dialog.getByRole("combobox", { name: "Supplier", exact: true }).inputValue(), "ui-supplier");
-      await dialog.getByLabel("PI Date", { exact: true }).fill(today);
+      assert.equal(await dialog.getByLabel("PI Number", { exact: true }).count(), 0, "PO editor does not repeat PI fields");
       await dialog.getByRole("button", { name: "Save Commercial Data", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); assert.equal(patches.at(-1).supplierId, "ui-supplier");
+      await page.getByRole("button", { name: "Edit PI details", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Edit PI details", exact: true });
+      assert.equal(await dialog.getByRole("combobox", { name: "Supplier", exact: true }).count(), 0, "PI editor does not repeat PO fields");
+      await dialog.getByLabel("PI Number", { exact: true }).fill("PI-TEST"); await dialog.getByLabel("PI Date", { exact: true }).fill(today);
+      await dialog.getByRole("button", { name: "Save Commercial Data", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); assert.deepEqual(Object.keys(patches.at(-1)).sort(), ["piDate", "piNumber"]);
       await page.getByRole("button", { name: "Edit product", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Edit imported product", exact: true });
       await dialog.getByLabel("Quantity", { exact: true }).fill("1e100"); await dialog.getByRole("button", { name: "Save Product Line", exact: true }).click(); await dialog.getByRole("alert").filter({ hasText: "without scientific notation" }).waitFor();
       await dialog.getByRole("combobox", { name: "FOB currency", exact: true }).selectOption("GBP"); assert.equal(await dialog.getByLabel("BDT per currency unit", { exact: true }).inputValue(), ""); await dialog.getByLabel("Quantity", { exact: true }).fill("2.5"); await dialog.getByLabel("FOB / Unit (GBP)", { exact: true }).fill("10"); await dialog.getByLabel("BDT per currency unit", { exact: true }).fill("150"); await dialog.getByRole("button", { name: "Save Product Line", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); assert.equal(itemPatches.at(-1).currency, "GBP"); assert.equal(itemPatches.at(-1).quantity, "2.5");
       const stages = page.getByRole("region", { name: "Import stages", exact: true }); assert.equal(await stages.getByRole("button").count(), 10);
-      for (const stage of ["LC / TT", "Production", "Shipment", "Documents", "Costs & Allocation", "Landed Cost", "Receiving", "Activity & Closure", "PO / Draft"]) { await stages.getByRole("button", { name: stage, exact: true }).click(); }
+      for (const [index, label] of [[2, "LC / TT"], [3, "Production"], [4, "Shipment"], [5, "Documents"], [6, "Costs & Allocation"], [7, "Landed Cost"], [8, "Receiving"], [9, "Activity & Closure"], [0, "PO / Draft"]]) {
+        await stages.getByRole("button", { name: label, exact: true }).click(); await assertSections(index);
+        await page.waitForFunction(index => { const rect = globalThis.document.getElementById(`import-step-${index}`).getBoundingClientRect(); return rect.top >= 0 && rect.top < globalThis.innerHeight && rect.bottom > 0; }, index);
+      }
       await stages.getByRole("button", { name: "Documents", exact: true }).click();
       await page.getByRole("heading", { name: "Import Documents", exact: true }).waitFor();
-      assert.equal(await page.getByRole("button", { name: "Edit shipment", exact: true }).count(), 0);
-      assert.equal(await page.getByText("Bill of lading", { exact: true }).isVisible(), false);
+      await assertSections(5);
+      assert.equal(await page.locator("#import-step-5").getByRole("button", { name: "Edit shipment", exact: true }).count(), 0);
+      assert.equal(await page.locator("#import-step-5").getByText("Bill of lading", { exact: true }).count(), 0, "Documents do not duplicate shipment fields");
+      assert.equal(await page.locator("#import-step-4").getByText("Bill of lading", { exact: true }).isVisible(), true);
+      await capture("all-import-sections");
+      await page.locator("#import-step-5").getByRole("button", { name: "Back to import steps", exact: true }).click();
+      await page.waitForFunction(() => { const rect = globalThis.document.getElementById("import-steps-navigation").getBoundingClientRect(); return rect.top >= 0 && rect.top < globalThis.innerHeight; });
+      await assertSections(5);
       await stages.getByRole("button", { name: "Costs & Allocation", exact: true }).click(); await page.getByRole("button", { name: "Add Cost", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Add import cost", exact: true }); await dialog.getByRole("combobox", { name: "Cost preset", exact: true }).selectOption("__add_preset__");
       const presetDialog = page.getByRole("dialog", { name: "Add cost preset", exact: true }); await presetDialog.getByLabel("Preset name", { exact: true }).fill("Insurance review"); await presetDialog.getByLabel("Reason for Change", { exact: true }).fill("Approved reusable cost label"); await presetDialog.getByRole("button", { name: "Save Changes", exact: true }).click(); await presetDialog.waitFor({ state: "hidden" }); await dialog.getByRole("combobox", { name: "Currency", exact: true }).selectOption("EUR"); assert.equal(await dialog.getByLabel("Exchange Rate Snapshot", { exact: true }).inputValue(), ""); await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await stages.getByRole("button", { name: "LC / TT", exact: true }).click(); await page.getByRole("button", { name: "Edit payment", exact: true }).click();
@@ -143,26 +192,46 @@ try {
       await page.getByTitle("packing.pdf", { exact: true }).waitFor(); await capture("import-documents");
       record = { ...record, paymentMode: "TT", ttReference: "TT-REVIEW", status: "LC/TT Opened", milestone: "LC/TT Opened", blNumber: "BL-REVIEW", etd: today, items: [{ ...record.items[0], fobTotalBdt: "3750.00", totalCbm: "1" }], costs: [{ id: "ui-cost", name: "Freight", category: "Freight", amountForeign: "100", currency: "BDT", exchangeRate: "1", amountBdt: "100.00", allocationMethod: "CBM", appliesToItemIds: [], enteredBy: user.name, createdAt: new Date().toISOString() }], costingStatus: "In Progress" };
       await page.reload();
+      await page.getByRole("button", { name: "Mark PI Received", exact: true }).click();
+      await page.getByRole("button", { name: "Mark LC / TT Opened", exact: true }).click();
+      const visibleSteps = page.getByRole("region", { name: "Import stages", exact: true });
+      assert.equal(await visibleSteps.evaluate(node => node.scrollWidth <= node.clientWidth + 2), true, "All ten tabs must wrap without horizontal scrolling");
       for (const next of ["In Production", "Shipped", "At Port", "Costing"]) {
+        if (next === "Costing") await capture("costing-next-action");
         await page.getByRole("button", { name: `Mark ${next}`, exact: true }).click();
-        const stageName = { "In Production": "Production", "Shipped": "Shipment", "At Port": "Documents", "Costing": "Costs & Allocation" }[next];
+        const stageName = { "In Production": "Shipment", "Shipped": "Documents", "At Port": "Costs & Allocation", "Costing": "Landed Cost" }[next];
         await page.getByRole("region", { name: "Import stages", exact: true }).getByRole("button", { name: stageName, exact: true }).and(page.locator('[aria-pressed="true"]')).waitFor();
       }
-      await capture("costing-next-action");
-      await page.getByRole("button", { name: "Review Landed Cost", exact: true }).click();
-      await page.getByRole("button", { name: "Finalize Snapshot", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Preview", exact: true }).click();
+      await page.getByRole("button", { name: "Mark Cost Finalized", exact: true }).waitFor();
       await capture("landed-cost-review");
-      await page.getByRole("button", { name: "Finalize Snapshot", exact: true }).click();
+      await page.getByRole("button", { name: "Mark Cost Finalized", exact: true }).click();
       await page.getByText("Finalized landed cost v1.", { exact: true }).waitFor();
       await page.getByRole("region", { name: "Import stages", exact: true }).getByRole("button", { name: "Receiving", exact: true }).click();
       await page.getByRole("button", { name: "Receive to Warehouse", exact: true }).waitFor();
-      assert.equal(record.status, "Cost Finalized"); await capture("receiving-next-action");
+      assert.equal(await page.getByRole("button", { name: "Receive to Warehouse", exact: true }).isEnabled(), false);
+      await page.getByRole("button", { name: "Set Up Accounting", exact: true }).click();
+      await page.getByRole("button", { name: "Starter Setup", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Starter Accounting Setup", exact: true });
+      await dialog.getByLabel("Setup reference", { exact: true }).fill("Owner-reviewed UAT setup");
+      await dialog.getByRole("checkbox").check(); await capture("starter-accounting-review");
+      await dialog.getByRole("button", { name: "Save Starter Draft", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); assert.equal(ledgerReady, false);
+      await page.getByRole("button", { name: "Approve", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Approve ledger mapping", exact: true });
+      await dialog.getByLabel("Decision reason / evidence", { exact: true }).fill("Owner reviewed proposed posting accounts");
+      await dialog.getByRole("button", { name: "Confirm", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+      await page.getByRole("button", { name: "Return to Import", exact: true }).click();
+      await page.getByRole("button", { name: "Receive to Warehouse", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Receive to warehouse", exact: true });
+      assert.equal(await dialog.getByRole("button", { name: "Post Warehouse Receipt", exact: true }).isEnabled(), false);
+      for (const [label, value] of [["Received Qty", "2.5"], ["Lot Number", "LOT-IMPORT"], ["Batch Number", "BATCH-IMPORT"], ["Manufacturing Date", today], ["Expiry Date", future], ["BIN / Rack Location", "A1"]]) await dialog.getByLabel(label, { exact: true }).fill(value);
+      await capture("validated-receiving"); await dialog.getByRole("button", { name: "Post Warehouse Receipt", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+      await page.getByRole("button", { name: "Close Case", exact: true }).waitFor();
+      assert.equal(record.status, "Received"); await capture("receiving-next-action");
       await page.getByRole("region", { name: "Import stages", exact: true }).getByRole("button", { name: "Activity & Closure", exact: true }).click();
       await page.getByText("Import created", { exact: true }).waitFor(); await page.getByText("Landed cost finalized (v1)", { exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: "Receive to Warehouse", exact: true }).count(), 0);
       await capture("import-activity");
       await page.getByRole("button", { name: "View Warehouse Receipts", exact: true }).click();
-      await page.getByRole("heading", { name: "Warehouse Receiving", exact: true }).waitFor();
+      await assertSections(8);
       await page.goto(`${origin}/backend/inventory`); await page.getByRole("button", { name: "Add Inventory", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Add Inventory", exact: true });
       await dialog.getByRole("combobox", { name: "Currency", exact: true }).selectOption("EUR"); assert.equal(await dialog.getByLabel("BDT per currency unit", { exact: true }).inputValue(), ""); await dialog.getByRole("combobox", { name: "Currency", exact: true }).selectOption("BDT");
       await dialog.getByRole("combobox", { name: "Supplier", exact: true }).selectOption("ui-supplier"); await dialog.getByLabel("Supplier invoice / Reference", { exact: true }).fill("SUPPLIER-INV-1"); await dialog.getByRole("combobox", { name: "Product 1", exact: true }).selectOption("ui-product");
