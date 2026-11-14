@@ -82,8 +82,11 @@ try {
           data = { id: path.split("/")[3] };
         } else if (path.startsWith("/api/documents/")) data = { url: `${origin}/favicon.png` };
         else if (path === "/api/imports" && request.method() === "POST") { importPosts.push(body); record = { ...record, ...body, items: [importLine()] }; data = record; status = 201; }
-        else if (path === "/api/imports/ui-import/confirm-step") { record = { ...record, confirmedSteps: [...new Set([...record.confirmedSteps, body.step])] }; data = record; }
-        else if (path === "/api/imports/ui-import/retract-step") { record = { ...record, confirmedSteps: record.confirmedSteps.filter(step => step < body.step), status: ["Draft", "Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port"][body.step] }; data = record; }
+        else if (path === "/api/imports/ui-import/confirm-step") { record = { ...record, confirmedSteps: [...new Set([...record.confirmedSteps, ...(body.step < 3 ? [body.step] : [])])], pendingReviewSteps: (record.pendingReviewSteps ?? []).filter(step => step !== body.step), ...(["Draft", "PI Received", "LC/TT Opened"].includes(record.status) && body.step > 0 ? { status: body.step === 1 ? "PI Received" : "LC/TT Opened" } : {}) }; data = record; }
+        else if (path === "/api/imports/ui-import/retract-step") {
+          if (record.snapshot && !receiptRows.length) assert.ok(body.reason?.length >= 5);
+          record = { ...record, confirmedSteps: record.confirmedSteps.filter(step => step < body.step), ...(receiptRows.length ? { pendingReviewSteps: [3, 4, 5, 6].filter(step => step >= body.step) } : { snapshot: undefined, costingStatus: "In Progress", warehouseStatus: "Not Ready", status: ["Draft", "Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port", "Costing"][body.step] }) }; data = record;
+        }
         else if (path === "/api/imports/ui-import/receiving-readiness") data = { ready: ledgerReady, canConfigure: true, message: ledgerReady ? "Company accounting setup is approved." : "Super Admin must finish the company accounting setup in Expenses & Accounts > General Ledger > Accounting Setup. This is a company-wide prerequisite, not a setting for each warehouse receipt." };
         else if (path === "/api/imports/ui-import/reopen-case") {
           assert.equal(record.status, "Closed"); assert.deepEqual(body, {});
@@ -103,8 +106,9 @@ try {
         } else if (path === "/api/imports/ui-import/cost-preview") data = calculateLandedCost(record.id, record.items, record.costs);
         else if (path === "/api/imports/ui-import/finalize") {
           assert.equal(record.status, "Costing");
-          const snapshot = { ...calculateLandedCost(record.id, record.items, record.costs), id: "ui-snapshot", version: 1, finalizedAt: new Date().toISOString(), finalizedBy: user.name, immutable: true };
-          record = { ...record, snapshot, snapshotHistory: [snapshot], status: "Cost Finalized", milestone: "Cost Finalized", costingStatus: "Finalized", warehouseStatus: "Ready" }; data = record;
+          const version = (record.snapshotHistory?.length ?? 0) + 1;
+          const snapshot = { ...calculateLandedCost(record.id, record.items, record.costs), id: `ui-snapshot-${version}`, version, finalizedAt: new Date().toISOString(), finalizedBy: user.name, immutable: true };
+          record = { ...record, snapshot, snapshotHistory: [...record.snapshotHistory ?? [], snapshot], status: "Cost Finalized", milestone: "Cost Finalized", costingStatus: "Finalized", warehouseStatus: "Ready" }; data = record;
         }
         else if (path === "/api/imports/ui-import/items/ui-item") { itemPatches.push(body); record = { ...record, items: [{ ...record.items[0], ...body }] }; data = record; }
         else if (path === "/api/imports/ui-import") {
@@ -215,11 +219,26 @@ try {
         const stageName = { "In Production": "Shipment", "Shipped": "Documents", "At Port": "Costs & Allocation", "Costing": "Landed Cost" }[next];
         await page.getByRole("region", { name: "Import stages", exact: true }).getByRole("button", { name: stageName, exact: true }).and(page.locator('[aria-pressed="true"]')).waitFor();
       }
-      await page.getByRole("button", { name: "Preview", exact: true }).click();
+      await page.getByRole("button", { name: "Generate Preview", exact: true }).click();
       await page.getByRole("button", { name: "Mark Cost Finalized", exact: true }).waitFor();
       await capture("landed-cost-review");
       await page.getByRole("button", { name: "Mark Cost Finalized", exact: true }).click();
       await page.getByText("Finalized landed cost v1.", { exact: true }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "View Landed Cost", exact: true }).count(), 0);
+      assert.equal(await page.getByRole("button", { name: "Generate Preview", exact: true }).count(), 0);
+      await page.getByRole("button", { name: "Edit product", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Reopen for editing", exact: true });
+      assert.equal(await dialog.getByRole("button", { name: "Reopen and Edit", exact: true }).isEnabled(), false);
+      await dialog.getByLabel("Correction reason", { exact: true }).fill("Correct product details before receiving"); await capture("finalized-edit-confirmation");
+      await dialog.getByRole("button", { name: "Reopen and Edit", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Edit imported product", exact: true }); await dialog.waitFor();
+      assert.equal(record.snapshot, undefined); assert.equal(record.snapshotHistory.length, 1);
+      await dialog.getByLabel("Quantity", { exact: true }).fill("2.5"); await dialog.getByLabel("Cartons", { exact: true }).fill("1"); await dialog.getByLabel("CBM / Carton", { exact: true }).fill("1"); await dialog.getByRole("button", { name: "Save Product Line", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+      for (const step of ["PI Received", "LC / TT Opened"]) await page.getByRole("button", { name: `Mark ${step}`, exact: true }).click();
+      for (const step of ["In Production", "Shipped", "At Port", "Costing"]) await page.getByRole("button", { name: `Mark ${step}`, exact: true }).click();
+      await page.getByRole("button", { name: "Generate Preview", exact: true }).click();
+      await page.getByRole("button", { name: "Mark Cost Finalized", exact: true }).click();
+      await page.getByText("Finalized landed cost v2.", { exact: true }).waitFor();
       await page.getByRole("region", { name: "Import stages", exact: true }).getByRole("button", { name: "Receiving", exact: true }).click();
       await page.getByRole("button", { name: "Receive to Warehouse", exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: "Receive to Warehouse", exact: true }).isEnabled(), false);
@@ -262,7 +281,7 @@ try {
       await page.getByText("Import created", { exact: true }).waitFor(); await page.getByText("Landed cost finalized (v1)", { exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: "Receive to Warehouse", exact: true }).count(), 0);
       await capture("import-activity");
-      await page.getByRole("button", { name: "View Warehouse Receipts", exact: true }).click();
+      await page.getByRole("region", { name: "Import stages", exact: true }).getByRole("button", { name: "Receiving", exact: true }).click();
       await assertSections(8);
       const savedSnapshot = structuredClone(record.snapshot), savedReceipts = structuredClone(receiptRows);
       await page.getByRole("button", { name: "Close Case", exact: true }).click();
@@ -273,6 +292,25 @@ try {
       await page.getByRole("button", { name: "Close Case", exact: true }).waitFor(); await assertSections(9);
       assert.equal(record.status, "Received"); assert.deepEqual(record.snapshot, savedSnapshot); assert.deepEqual(receiptRows, savedReceipts);
       assert.equal(await page.getByRole("button", { name: "Receive to Warehouse", exact: true }).count(), 0);
+      await page.getByRole("button", { name: "Edit purchase order", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Edit purchase order", exact: true });
+      assert.equal(await dialog.getByRole("combobox", { name: "Supplier", exact: true }).count(), 0);
+      await dialog.getByLabel("PO Number", { exact: true }).fill("PO-CORRECTED-AFTER-REOPEN"); await capture("received-reference-editor");
+      await dialog.getByRole("button", { name: "Save Commercial Data", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+      assert.equal(record.poNumber, "PO-CORRECTED-AFTER-REOPEN");
+      await page.getByRole("button", { name: "Edit payment", exact: true }).click(); dialog = page.getByRole("dialog", { name: "LC / TT", exact: true });
+      assert.equal(await dialog.getByLabel("Payment mode", { exact: true }).count(), 0);
+      await dialog.getByLabel("TT / Shipment reference", { exact: true }).fill("TT-CORRECTED");
+      await dialog.getByRole("button", { name: "Save Changes", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+      assert.equal("exchangeRate" in patches.at(-1), false); assert.equal("ttAmount" in patches.at(-1), false);
+      await page.getByRole("button", { name: "Retract PI & Products completion", exact: true }).click();
+      dialog = page.getByRole("dialog", { name: "Retract completion?", exact: true });
+      await dialog.getByRole("button", { name: "Retract Completion", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+      assert.equal(record.status, "Received"); assert.deepEqual(record.pendingReviewSteps, [3, 4, 5, 6]);
+      assert.equal(await page.getByRole("button", { name: "Close Case", exact: true }).isEnabled(), false);
+      await capture("received-review-retracted");
+      for (const label of ["Mark PI Received", "Mark LC / TT Opened", "Mark In Production", "Mark Shipped", "Mark At Port", "Mark Costing"]) await page.getByRole("button", { name: label, exact: true }).click();
+      assert.deepEqual(record.pendingReviewSteps, []); assert.deepEqual(record.snapshot, savedSnapshot); assert.deepEqual(receiptRows, savedReceipts);
       await capture("reopened-case");
       await page.goto(`${origin}/backend/inventory`); await page.getByRole("button", { name: "Add Inventory", exact: true }).click(); dialog = page.getByRole("dialog", { name: "Add Inventory", exact: true });
       await dialog.getByRole("combobox", { name: "Currency", exact: true }).selectOption("EUR"); assert.equal(await dialog.getByLabel("BDT per currency unit", { exact: true }).inputValue(), ""); await dialog.getByRole("combobox", { name: "Currency", exact: true }).selectOption("BDT");

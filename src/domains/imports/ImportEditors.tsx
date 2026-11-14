@@ -16,11 +16,12 @@ import { hasCapability } from "../../lib/permissions/effectiveAccess";
 const Decimal = DecimalJs.clone({ precision: 48, rounding: DecimalJs.ROUND_HALF_UP });
 
 export function CommercialEditor({ record, busy, onSubmit, requirePi = false }: { record: ImportCase; busy: boolean; onSubmit: (payload: Partial<ImportCase>) => void; requirePi?: boolean }) {
+  const protectedValues = record.costingStatus === "Finalized";
   const [form, setForm] = useState({ supplierId: record.supplierId ?? "", poNumber: record.poNumber, poDate: record.poDate, piNumber: record.piNumber ?? "", piDate: record.piDate ?? "", expectedShipmentDate: record.expectedShipmentDate ?? "", notes: record.notes ?? "" });
   const change = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
   return <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); onSubmit(requirePi ? { piNumber: form.piNumber, piDate: form.piDate } : { supplierId: form.supplierId, poNumber: form.poNumber, poDate: form.poDate, expectedShipmentDate: form.expectedShipmentDate, notes: form.notes }); }}>
     {!requirePi ? <>
-    <label className="sm:col-span-2"><span className={labelClass}>Supplier</span><MasterSelect kind="suppliers" label="Supplier" value={form.supplierId} onChange={(value) => change("supplierId", value)} required /></label>
+    {protectedValues ? <div className="sm:col-span-2"><dl><KeyValue label="Supplier" value={record.supplierName} /></dl><p className="mt-1 text-xs text-slate-600">Supplier identity is protected by finalized costing. PO references, dates and notes remain editable.</p></div> : <label className="sm:col-span-2"><span className={labelClass}>Supplier</span><MasterSelect kind="suppliers" label="Supplier" value={form.supplierId} onChange={(value) => change("supplierId", value)} required /></label>}
     <label><span className={labelClass}>PO Number</span><input className={inputClass} value={form.poNumber} maxLength={200} onChange={(e) => change("poNumber", e.target.value)} required /></label>
     <label><span className={labelClass}>PO Date</span><input className={inputClass} type="date" value={form.poDate} onChange={(e) => change("poDate", e.target.value)} required /></label>
     </> : null}
@@ -56,6 +57,7 @@ export function ImportLogisticsSummary({ record, stage, canSeeCost }: { record: 
 export function ShipmentEditor({ record, stage = 2, busy, error, onSubmit }: { record: ImportCase; stage?: number; busy: boolean; error?: unknown; onSubmit: (payload: Partial<ImportCase>) => void }) {
   const actor = useAuthStore((s) => s.session?.user);
   const canEditCost = hasCapability(actor, "edit_sensitive_cost");
+  const protectedValues = record.costingStatus === "Finalized";
   const [form, setForm] = useState({ paymentMode: record.paymentMode, lcNumber: record.lcNumber ?? "", lcAmount: record.lcAmount ?? "", lcBankAmount: record.lcBankAmount ?? "", lcOtherAmount: record.lcOtherAmount ?? "", lcOpenDate: record.lcOpenDate ?? "", lcExpiryDate: record.lcExpiryDate ?? "", ttReference: record.ttReference ?? "", ttAmount: record.ttAmount ?? "", ttDate: record.ttDate ?? "", bank: record.bank ?? "", currency: record.currency, exchangeRate: record.exchangeRate, rateDate: record.rateDate, rateSource: record.rateSource, commercialInvoiceNumber: record.commercialInvoiceNumber ?? "", commercialInvoiceDate: record.commercialInvoiceDate ?? "", productionStatus: record.productionStatus ?? "", productionFollowUpNote: record.productionFollowUpNote ?? "", blNumber: record.blNumber ?? "", containerNumber: record.containerNumber ?? "", containerType: record.containerType ?? "", vesselName: record.vesselName ?? "", etd: record.etd ?? "", eta: record.eta ?? "" });
   const [localError, setLocalError] = useState("");
   const hasSplitInput = form.lcBankAmount !== "" || form.lcOtherAmount !== "";
@@ -71,14 +73,18 @@ export function ShipmentEditor({ record, stage = 2, busy, error, onSubmit }: { r
     if (stage === 4 && form.eta && form.etd && form.eta < form.etd) return setLocalError("ETA must not be before ETD.");
     setLocalError("");
     const fields: (keyof typeof form)[] = stage === 3 ? ["productionStatus", "productionFollowUpNote"] : stage === 4 ? ["commercialInvoiceNumber", "commercialInvoiceDate", "blNumber", "containerNumber", "containerType", "vesselName", "etd", "eta"] : ["paymentMode", "lcNumber", "lcAmount", "lcBankAmount", "lcOtherAmount", "lcOpenDate", "lcExpiryDate", "ttReference", "ttAmount", "ttDate", "bank", "currency", "exchangeRate", "rateDate", "rateSource"];
-    const payload = paymentPayload(Object.fromEntries(fields.map((key) => [key, form[key]])));
+    const referenceFields = ["lcNumber", "lcOpenDate", "lcExpiryDate", "ttReference", "ttDate", "bank"];
+    const payload = paymentPayload(Object.fromEntries(fields.filter(key => !protectedValues || stage !== 2 || referenceFields.includes(key)).map((key) => [key, form[key]])));
     if (stage === 2 && form.paymentMode === "LC" && hasSplitInput) delete payload.lcAmount;
     onSubmit(payload);
   };
   return <form className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onSubmit={submit}>
     {error ? <div className="sm:col-span-2 lg:col-span-3"><ErrorBlock error={error} title="Import details could not be saved" /></div> : null}
     {localError ? <p role="alert" className="text-sm text-red-700 sm:col-span-2 lg:col-span-3">{localError}</p> : null}
-    {stage === 2 ? <>
+    {stage === 2 && protectedValues ? <>
+      <div className="sm:col-span-2 lg:col-span-3"><dl className="grid gap-3 sm:grid-cols-3"><KeyValue label="Payment mode" value={record.paymentMode} /><KeyValue label="Currency" value={record.currency} />{canEditCost ? <KeyValue label="Recorded amount" value={record.paymentMode === "LC" ? record.lcAmount : record.ttAmount} /> : null}</dl><p className="mt-2 text-xs text-slate-600">Financial values are protected by finalized costing. References, bank and payment dates remain editable.</p></div>
+      {record.paymentMode === "LC" ? <>{field("lcNumber", "LC number", "text", true)}{field("lcOpenDate", "LC open date", "date")}{field("lcExpiryDate", "LC expiry date", "date")}</> : <>{field("ttReference", "TT / Shipment reference", "text", true)}{field("ttDate", "TT date", "date")}</>}{field("bank", "Bank")}
+    </> : stage === 2 ? <>
       <label><span className={labelClass}>Payment mode</span><select name="paymentMode" aria-label="Payment mode" required className={inputClass} value={form.paymentMode} onChange={(e) => change("paymentMode", e.target.value)}><option value="Pending">Pending decision</option><option value="LC">LC</option><option value="TT">TT</option></select></label>
       {form.paymentMode === "LC" ? <>{field("lcNumber", "LC number", "text", true)}{field("lcBankAmount", `Bank amount (${form.currency})`, "number", splitRequired)}{field("lcOtherAmount", `Other amount (${form.currency})`, "number", splitRequired)}{canEditCost ? <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3 sm:col-span-2 lg:col-span-3"><span className="text-xs text-cyan-900">LC total ({form.currency})</span><output aria-label="LC total" className="mt-1 block text-lg font-bold text-cyan-950">{lcTotal}</output>{!hasSplitInput && record.lcAmount !== undefined && record.lcBankAmount === undefined && record.lcOtherAmount === undefined ? <p className="mt-1 text-xs text-slate-600">Recorded total. Bank / other breakdown has not been entered.</p> : null}</div> : null}{field("lcOpenDate", "LC open date", "date")}{field("lcExpiryDate", "LC expiry date", "date")}</> : form.paymentMode === "TT" ? <>{field("ttReference", "TT / Shipment reference", "text", true)}{field("ttAmount", `TT amount (${form.currency})`, "number")}{field("ttDate", "TT date", "date")}</> : null}
       {field("bank", "Bank")}

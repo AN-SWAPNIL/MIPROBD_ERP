@@ -228,6 +228,7 @@ export type LandedCostSnapshot = LandedCostPreview & {
 
 export type ImportCase = {
   confirmedSteps?: number[];
+  pendingReviewSteps?: number[];
   id: string;
   draftReference: string;
   primaryReference: string;

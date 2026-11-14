@@ -13,7 +13,7 @@ import { canonicalItem, loadImport, loadImports, lockImport, money, visibleImpor
 import { activePaymentFields, paymentPayload } from "../../src/domains/imports/paymentPayload.js";
 import { z } from "zod";
 import { digest } from "../foundation/context.js";
-import { confirmationEpoch, importConfirmationSource, importWorkflow, retractedImportStatus } from "../../src/domains/imports/workflow.js";
+import { confirmationEpoch, importConfirmationSource, importReviewEpoch, importWorkflow, retractedImportStatus } from "../../src/domains/imports/workflow.js";
 const CostDecimal = Decimal.clone({ precision: 48, rounding: Decimal.ROUND_HALF_UP });
 
 function baseStatus(commercial: Pick<ImportCase, "piNumber" | "paymentMode" | "lcNumber" | "ttReference">) {
@@ -68,8 +68,10 @@ export function createImportRouter(ctx: Context) {
       const user = await lockActor(tx, identity(res), "import", "edit");
       const row = await lockImport(tx, String(req.params.id));
       if (["Closed", "Cancelled"].includes(row.status)) throw new HttpError(423, "Reopen the closed case before editing. Cancelled cases are read-only.");
-      const followUpFields = ["productionStatus", "productionFollowUpNote", "commercialInvoiceNumber", "commercialInvoiceDate", "blNumber", "containerNumber", "containerType", "vesselName", "etd", "eta", "notes", "expectedShipmentDate"];
-      if (row.currentSnapshotVersion !== null && Object.keys(patch).some(key => !followUpFields.includes(key))) throw new HttpError(423, "Posted commercial values and costing are protected. Reopen unreceived costing first; received stock needs a source-linked correction. Production and shipment follow-up remain editable.");
+      const followUpFields = ["poNumber", "poDate", "piNumber", "piDate", "lcNumber", "lcOpenDate", "lcExpiryDate", "ttReference", "ttDate", "bank", "productionStatus", "productionFollowUpNote", "commercialInvoiceNumber", "commercialInvoiceDate", "blNumber", "containerNumber", "containerType", "vesselName", "etd", "eta", "notes", "expectedShipmentDate"];
+      const changedFields = Object.keys(patch).filter(key => JSON.stringify(patch[key as keyof typeof patch] ?? "") !== JSON.stringify(key === "supplierId" ? row.supplierId : row.commercial[key as keyof typeof row.commercial] ?? ""));
+      const protectedChanges = changedFields.filter(key => !followUpFields.includes(key));
+      if (row.currentSnapshotVersion !== null && protectedChanges.length) throw new HttpError(423, "Reopen unreceived landed cost before changing supplier or financial values. Received stock and its valuation cannot be rewritten; references, dates and follow-up remain editable.", protectedChanges.map(field => ({ field, message: "Protected by finalized costing. Reopen costing before changing this value; existing warehouse receipts prevent reopening." })));
       const { supplierId, ...commercialPatch } = patch;
       let supplierName = row.supplierName;
       if (supplierId && supplierId !== row.supplierId) {
@@ -82,7 +84,7 @@ export function createImportRouter(ctx: Context) {
       const commercial = { ...validated, rateDate: validated.rateDate ?? "" };
       if (row.currentSnapshotVersion === null && !["Draft", "PI Received", "LC/TT Opened"].includes(row.status) && baseStatus(commercial) !== "LC/TT Opened") throw new HttpError(422, "Retract the relevant completion mark before removing required PI or LC/TT references.");
       await tx.update(importCases).set({ commercial, supplierId: supplierId ?? row.supplierId, supplierName, status: ["Draft", "PI Received", "LC/TT Opened"].includes(row.status) ? baseStatus(commercial) : row.status, updatedAt: new Date() }).where(eq(importCases.id, row.id));
-      await audit(tx, user.id, "Import commercial details updated", "Import", row.id, supplierId && supplierId !== row.supplierId ? { previousSupplierId: row.supplierId, supplierId } : {});
+      await audit(tx, user.id, "Import commercial details updated", "Import", row.id, { changedFields, ...(supplierId && supplierId !== row.supplierId ? { previousSupplierId: row.supplierId, supplierId } : {}) });
     });
     res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Import updated" });
   });
@@ -203,6 +205,7 @@ export function createImportRouter(ctx: Context) {
       const allowed: Record<string, string[]> = { "LC/TT Opened": ["In Production"], "In Production": ["Shipped"], "Shipped": ["At Port"], "At Port": ["Costing"], "Received": ["Closed"] };
       const record = await loadImport(tx, row.id);
       if (status !== "Cancelled" && record.confirmedSteps !== undefined && [0, 1, 2].some(step => !record.confirmedSteps!.includes(step))) throw new HttpError(422, "Confirm the current PO, PI and LC/TT steps first.");
+      if (status === "Closed" && record.pendingReviewSteps?.length) throw new HttpError(422, "Complete the retracted import reviews before closing the case.");
       if (status === "Cancelled") {
         if (row.currentSnapshotVersion !== null || ["Received", "Partially Received", "Closed", "Cancelled"].includes(row.status)) throw new HttpError(409, "Posted/terminal imports cannot be cancelled.");
       } else if (!allowed[row.status]?.includes(status)) throw new HttpError(409, "This milestone transition is not allowed.");
@@ -213,35 +216,47 @@ export function createImportRouter(ctx: Context) {
     res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Milestone updated" });
   });
   router.post("/imports/:id/confirm-step", async (req, res) => {
-    const { step } = z.object({ step: z.number().int().min(0).max(2) }).strict().parse(req.body);
+    const { step } = z.object({ step: z.number().int().min(0).max(6) }).strict().parse(req.body);
     await ctx.db.transaction(async tx => {
       const user = await lockActor(tx, identity(res), "import", "edit");
-      const row = await lockImport(tx, String(req.params.id), true);
+      const row = await lockImport(tx, String(req.params.id));
+      if (["Closed", "Cancelled"].includes(row.status)) throw new HttpError(423, "Closed and cancelled cases are read-only. Reopen a closed case before changing completion marks.");
       const record = await loadImport(tx, row.id);
-      const workflow = importWorkflow(record);
+      if (step >= 3 && (row.currentSnapshotVersion === null || !record.pendingReviewSteps?.includes(step))) throw new HttpError(409, "Use the milestone action for this step. Only retracted reviews on finalized cases can be reconfirmed here.");
+      if (step === 6) assertAllowed(hasCapability(user, "view_sensitive_cost"), "Cost-review access is required to reconfirm this step.");
+      const workflow = importWorkflow(record, hasCapability(user, "view_sensitive_cost"));
       const target = workflow.steps[step];
       if (target.reasons.length) throw new HttpError(422, target.reasons.join(" "));
       if (record.confirmedSteps?.includes(step)) return;
       // Preserve inferred progress for pre-guided records when their first confirmation is saved.
       const inherited = record.confirmedSteps === undefined ? [0, 1, 2].filter(index => workflow.steps[index].completed) : [];
       const history = await tx.select({ action: auditEvents.action, details: auditEvents.details }).from(auditEvents).where(and(eq(auditEvents.entityType, "Import"), eq(auditEvents.entityId, row.id), eq(auditEvents.action, "Import stage retracted")));
-      for (const index of new Set([...inherited, step])) await audit(tx, user.id, "Import stage confirmed", "Import", row.id, { step: index, epoch: confirmationEpoch(history, index), fingerprint: digest(importConfirmationSource(record, index)) });
+      for (const index of new Set([...inherited, step])) await audit(tx, user.id, "Import stage confirmed", "Import", row.id, { step: index, epoch: confirmationEpoch(history, index), reviewEpoch: importReviewEpoch(history, index), fingerprint: digest(importConfirmationSource(record, index)) });
       if (["Draft", "PI Received", "LC/TT Opened"].includes(row.status) && step > 0) await tx.update(importCases).set({ status: step === 1 ? "PI Received" : "LC/TT Opened", updatedAt: new Date() }).where(eq(importCases.id, row.id));
     });
     res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Saved import stage confirmed" });
   });
   router.post("/imports/:id/retract-step", async (req, res) => {
-    const { step } = z.object({ step: z.number().int().min(0).max(6) }).strict().parse(req.body);
+    const { step, reason } = z.object({ step: z.number().int().min(0).max(7), reason: reasonInput.shape.reason.optional() }).strict().parse(req.body);
     await ctx.db.transaction(async tx => {
       const user = await lockActor(tx, identity(res), "import", "edit");
-      const row = await lockImport(tx, String(req.params.id), true);
+      const row = await lockImport(tx, String(req.params.id));
+      if (["Closed", "Cancelled"].includes(row.status)) throw new HttpError(423, "Closed and cancelled cases are read-only. Reopen a closed case before retracting completion.");
       const record = await loadImport(tx, row.id);
       if (!importWorkflow(record).steps[step].completed) throw new HttpError(409, "This step is not completed. Reload the case before retracting a mark.");
       const [receipt] = await tx.select({ id: warehouseReceipts.id }).from(warehouseReceipts).where(eq(warehouseReceipts.importId, row.id)).limit(1);
-      if (receipt) throw new HttpError(409, "Receipt-backed steps cannot be retracted. Use the stock correction workflow instead.");
+      if (receipt && step === 7) throw new HttpError(409, "Landed cost cannot be retracted after receiving: existing stock uses this snapshot. Earlier review marks may still be retracted.");
+      const reopenCosting = row.currentSnapshotVersion !== null && !receipt;
+      if (reopenCosting) {
+        assertAllowed(user.role === "Super Admin" && hasCapability(user, "reopen_landed_cost"), "Landed-cost reopening authority is required before changing finalized costing.");
+        if (!reason) throw new HttpError(422, "Enter a reason to reopen finalized landed cost.", [{ field: "reason", message: "A correction reason is required." }]);
+        await audit(tx, user.id, "Landed cost reopened", "Import", row.id, { reason, previousVersion: row.currentSnapshotVersion });
+      }
       if (record.confirmedSteps === undefined) for (const index of [0, 1, 2].filter(i => i < step && importWorkflow(record).steps[i].completed)) await audit(tx, user.id, "Import stage confirmed", "Import", row.id, { step: index, fingerprint: digest(importConfirmationSource(record, index)), epoch: 0 });
-      await audit(tx, user.id, "Import stage retracted", "Import", row.id, { step, from: row.status, to: retractedImportStatus(step) });
-      await tx.update(importCases).set({ status: retractedImportStatus(step), updatedAt: new Date() }).where(eq(importCases.id, row.id));
+      // After a receipt, checklist review is independent of physical stock and costing status.
+      const status = receipt ? row.status : retractedImportStatus(step);
+      await audit(tx, user.id, "Import stage retracted", "Import", row.id, { step, from: row.status, to: status, reviewOnly: Boolean(receipt), ...(reason ? { reason } : {}) });
+      await tx.update(importCases).set({ status, ...(reopenCosting ? { currentSnapshotVersion: null } : {}), updatedAt: new Date() }).where(eq(importCases.id, row.id));
     });
     res.json({ success: true, data: await read(String(req.params.id), identity(res).user), message: "Completion retracted. Saved fields and documents are unchanged; later steps require completion again." });
   });
