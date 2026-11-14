@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ImportCase } from "../erp.types.js";
-import { confirmationEpoch, importConfirmationSource, importStepActions, importSteps, importWorkflow, retractedImportStatus } from "./workflow.js";
+import { confirmationEpoch, importConfirmationSource, importStepActions, importSteps, importWorkflow, pendingImportReviews, retractedImportStatus } from "./workflow.js";
 
 function record(overrides: Partial<ImportCase> = {}): ImportCase {
   return { id: "imp", draftReference: "IMP-1", primaryReference: "LC-1", supplierId: "supplier", supplierName: "Supplier", poNumber: "PO-1", poDate: "2026-11-01", piNumber: "PI-1", piDate: "2026-11-02", paymentMode: "LC", lcNumber: "LC-1", currency: "USD", exchangeRate: "120", rateDate: "2026-11-02", rateSource: "Bank", status: "Draft", milestone: "Draft", costingStatus: "Not Started", warehouseStatus: "Not Ready", items: [{ id: "i", productId: "p", productCode: "P", productName: "Product", quantity: "10", unit: "pcs", currency: "USD", fobUnitForeign: "2", exchangeRate: "120", fobTotalBdt: "2400", cbmPerCarton: "1", cartonCount: "1", totalCbm: "1" }], costs: [], documents: [], createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", ...overrides };
@@ -53,4 +53,17 @@ test("retractions invalidate the selected confirmation and all later confirmatio
   assert.equal(confirmationEpoch(events, 0), 0); assert.equal(confirmationEpoch(events, 1), 1); assert.equal(confirmationEpoch(events, 2), 1);
   assert.equal(confirmationEpoch([...events, ...events], 2), 2);
   assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map(retractedImportStatus), ["Draft", "Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port"]);
+  assert.equal(retractedImportStatus(7), "Costing");
+});
+
+test("receipt-backed review retraction preserves physical milestones and requires reconfirmation before closing", () => {
+  const retract = { action: "Import stage retracted", details: { step: 1, reviewOnly: true } };
+  const events = [retract, { action: "Import stage confirmed", details: { step: 3, reviewEpoch: 1 } }];
+  assert.deepEqual(pendingImportReviews(events), [4, 5, 6]);
+  assert.deepEqual(pendingImportReviews([...events, retract]), [3, 4, 5, 6], "Old confirmations must not satisfy a newer retraction");
+  assert.deepEqual(pendingImportReviews([{ action: "Import stage retracted", details: { step: 1 } }]), [], "Ordinary retraction uses the physical status instead");
+  const flow = importWorkflow(record({ status: "Received", costingStatus: "Finalized", warehouseStatus: "Received", confirmedSteps: [0], pendingReviewSteps: pendingImportReviews(events) }));
+  assert.equal(flow.currentStep, 1); assert.equal(flow.steps[4].completed, false);
+  assert.equal(flow.steps[7].completed, true); assert.equal(flow.steps[8].completed, true);
+  assert.ok(flow.steps[9].reasons.some(reason => reason.includes("outstanding import reviews")));
 });

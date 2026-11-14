@@ -11,7 +11,7 @@ import { newId } from "./common.js";
 import { itemInput } from "./contracts.js";
 import type { z } from "zod";
 import { digest } from "../foundation/context.js";
-import { confirmationEpoch, importConfirmationSource } from "../../src/domains/imports/workflow.js";
+import { confirmationEpoch, importConfirmationSource, pendingImportReviews } from "../../src/domains/imports/workflow.js";
 
 export const money = (value: Decimal.Value) => new Decimal(value).toFixed(2);
 const CostDecimal = Decimal.clone({ precision: 48, rounding: Decimal.ROUND_HALF_UP });
@@ -39,6 +39,7 @@ export async function loadImports(tx: Transaction, id?: string): Promise<ImportC
     };
     const history = confirmations.filter(event => event.entityId === record.id);
     if (history.length) result.confirmedSteps = [0, 1, 2].filter(step => history.some(event => event.action === "Import stage confirmed" && event.details.step === step && (event.details.epoch ?? 0) === confirmationEpoch(history, step) && event.details.fingerprint === digest(importConfirmationSource(result, step))));
+    result.pendingReviewSteps = pendingImportReviews(history);
     return result;
   });
 }

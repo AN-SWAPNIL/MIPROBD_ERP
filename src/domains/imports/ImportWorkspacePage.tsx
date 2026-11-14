@@ -79,7 +79,8 @@ import { importStepActions, importSteps, importWorkflow } from "./workflow";
 
 const Decimal = DecimalJs.clone({ precision: 48, rounding: DecimalJs.ROUND_HALF_UP });
 
-type ActionTask = { run: () => Promise<unknown>; success: string; stage?: number | null };
+type EditRequest = { modal: "commercial" | "shipment" | "item" | "cost"; stage: number; item?: ImportItem; cost?: ImportCostLine };
+type ActionTask = { run: () => Promise<unknown>; success: string; stage?: number | null; editAfter?: EditRequest };
 
 function scrollToImportSection(id: string) {
   requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }));
@@ -91,7 +92,7 @@ export default function ImportWorkspacePage() {
   const queryClient = useQueryClient();
   const pushToast = useToastStore((state) => state.push);
   const session = useAuthStore((state) => state.session);
-  const [modal, setModal] = useState<"commercial" | "shipment" | "item" | "cost" | "document" | "receive" | "reopen" | null>(null);
+  const [modal, setModal] = useState<"commercial" | "shipment" | "item" | "cost" | "document" | "receive" | null>(null);
   const [editingItem, setEditingItem] = useState<ImportItem | undefined>();
   const [editingCost, setEditingCost] = useState<ImportCostLine | undefined>();
   const [deleteItem, setDeleteItem] = useState<ImportItem | null>(null);
@@ -99,6 +100,7 @@ export default function ImportWorkspacePage() {
   const [pendingTransition, setPendingTransition] = useState<"Cancelled" | "Closed" | null>(null);
   const [reopeningCase, setReopeningCase] = useState(false);
   const [retractingStep, setRetractingStep] = useState<number | null>(null);
+  const [editAfterReopen, setEditAfterReopen] = useState<EditRequest | undefined>();
   const [accountingSetupOpen, setAccountingSetupOpen] = useState(false);
   const [preview, setPreview] = useState<LandedCostPreview | null>(null);
   const [viewingDocument, setViewingDocument] = useState<DocumentRecord | null>(null);
@@ -130,9 +132,13 @@ export default function ImportWorkspacePage() {
         const next = task.stage ?? (fresh ? importWorkflow(fresh, hasCapability(session?.user, "view_sensitive_cost")).currentStep : undefined);
         if (next !== undefined) scrollToImportSection(`import-step-${next}`);
       }
-      setModal(null);
-      setEditingItem(undefined);
-      setEditingCost(undefined);
+      setModal(task.editAfter?.modal ?? null);
+      setEditingItem(task.editAfter?.item);
+      setEditingCost(task.editAfter?.cost);
+      if (task.editAfter) setEditingStage(task.editAfter.stage);
+      setEditAfterReopen(undefined);
+      setDeleteItem(null);
+      setDeleteCost(null);
       setPendingTransition(null);
       setReopeningCase(false);
       setRetractingStep(null);
@@ -140,7 +146,7 @@ export default function ImportWorkspacePage() {
       setExtraction(null);
       pushToast({ kind: "success", title: task.success });
     },
-    onError: (error) => { if (modal === "receive") void queryClient.invalidateQueries({ queryKey: ["import-receiving-readiness", importId] }); if (!modal || modal === "reopen") pushToast({ kind: "error", title: "Action could not be completed", message: error instanceof Error ? error.message : undefined }); }
+    onError: (error) => { if (modal === "receive") void queryClient.invalidateQueries({ queryKey: ["import-receiving-readiness", importId] }); if (!modal) pushToast({ kind: "error", title: "Action could not be completed", message: error instanceof Error ? error.message : undefined }); }
   });
   const previewMutation = useMutation({
     mutationFn: () => importService.preview(importId),
@@ -166,16 +172,19 @@ export default function ImportWorkspacePage() {
   const canEditCost = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "edit_sensitive_cost") && !locked && !terminal;
   const canFinalize = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "finalize_landed_cost") && (!foundationMode || session?.user.role === "Super Admin") && !locked && !terminal;
   const canReopen = hasEffectivePermission(session?.user, "import", "edit") && hasCapability(session?.user, "reopen_landed_cost") && (!foundationMode || session?.user.role === "Super Admin") && locked && !terminal && !receiptsQuery.isPending && !receiptsQuery.isError && receipts.length === 0;
+  const received = receipts.length > 0 || ["Partially Received", "Received", "Closed"].includes(record.status);
+  const canChangeValues = canEdit || canReopen;
+  const canChangeCosts = canChangeValues && hasCapability(session?.user, "edit_sensitive_cost");
   const canReceive = hasEffectivePermission(session?.user, "inventory", "post") && record.costingStatus === "Finalized" && record.warehouseStatus !== "Received";
   const result = record.snapshot ?? preview;
   const workflow = importWorkflow(record, canSeeCost);
   const stage = selectedStage ?? workflow.currentStep;
   const canCancel = canEdit && ["Draft", "PI Received", "LC/TT Opened", "In Production", "Shipped", "At Port", "Costing"].includes(record.status);
-  const mayMark = (index: number) => index < 7 ? canEdit : index === 7 ? canFinalize : index === 8 ? hasEffectivePermission(session?.user, "inventory", "post") && !terminal : hasEffectivePermission(session?.user, "import", "edit") && !terminal;
+  const mayMark = (index: number) => index < 7 ? canEditFollowUp : index === 7 ? canFinalize : index === 8 ? hasEffectivePermission(session?.user, "inventory", "post") && !terminal : canEditFollowUp;
   const blockers = (index: number) => [...workflow.steps[index].reasons, ...(index === 7 && !result ? ["Generate and review the landed-cost preview before finalizing."] : []), ...(index === 8 && receiptsQuery.isError ? ["Reload warehouse receipt history before posting."] : [])];
   const markStep = (index: number) => {
     setSelectedStage(index);
-    if (index < 3) return action.mutate({ run: () => importService.confirmStep(record.id, index), success: `${importSteps[index]} confirmed`, stage: null });
+    if (index < 3 || locked && index < 7) return action.mutate({ run: () => importService.confirmStep(record.id, index), success: `${importSteps[index]} confirmed`, stage: null });
     const transitions = { 3: "In Production", 4: "Shipped", 5: "At Port", 6: "Costing" } as const;
     if (index >= 3 && index <= 6) return action.mutate({ run: () => importService.transition(record.id, transitions[index as 3 | 4 | 5 | 6]), success: `Import moved to ${transitions[index as 3 | 4 | 5 | 6]}`, stage: null });
     if (index === 7) return action.mutate({ run: () => importService.finalize(record.id), success: "Landed cost finalized and locked", stage: null });
@@ -184,13 +193,23 @@ export default function ImportWorkspacePage() {
   };
   const logisticsTitle = ["LC / TT", "Production Follow-up", "Shipment"][editingStage - 2] ?? "Shipment";
   const selectStep = (index: number) => { setSelectedStage(index); action.reset(); scrollToImportSection(`import-step-${index}`); };
+  const beginEdit = (request: EditRequest) => {
+    action.reset(); setSelectedStage(request.stage);
+    if (locked && !received && canReopen && (request.stage < 3 || request.modal === "cost")) {
+      setEditAfterReopen(request);
+      setRetractingStep(workflow.steps[request.stage].completed ? request.stage : 7);
+      return;
+    }
+    setEditingStage(request.stage); setEditingItem(request.item); setEditingCost(request.cost); setModal(request.modal);
+  };
+  const mayRetract = (index: number) => index < 8 && canEditFollowUp && (!locked && index < 7 || canReopen || received && index < 7);
   const stepFooter = (index: number) => {
     const entry = workflow.steps[index], reasons = blockers(index);
     return <div className="border-t border-blue-100 bg-blue-50/40 p-4">
       {action.isError && !modal && stage === index ? <ErrorBlock error={action.error} title="Import action could not be completed" /> : null}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">{!entry.completed && reasons.length ? <ul className="list-inside list-disc text-xs leading-5 text-amber-900">{(stage === index || workflow.currentStep === index ? reasons : reasons.slice(0, 1)).map(reason => <li key={reason}>{reason}</li>)}</ul> : null}</div>
-        {entry.completed ? <div className="flex flex-wrap items-center gap-2"><span className="flex items-center gap-1 text-xs font-semibold text-emerald-800"><Check className="h-4 w-4" />Completed</span>{canEdit && index < 7 ? <Button icon={<RotateCcw className="h-4 w-4" />} disabled={action.isPending} aria-label={`Retract ${importSteps[index]} completion`} onClick={() => { action.reset(); setRetractingStep(index); }}>Retract Completion</Button> : null}</div> : mayMark(index) ? <Button variant="primary" icon={<Check className="h-4 w-4" />} disabled={action.isPending || reasons.length > 0 || index === 8 && (receiptsQuery.isPending || receivingReadiness.isPending || receivingReadiness.isError || !receivingReadiness.data?.ready)} onClick={() => markStep(index)}>{importStepActions[index]}</Button> : <span className="text-xs text-slate-600">{terminal || locked && index < 8 ? "Read-only section" : "Assigned role approval or posting authority required"}</span>}
+        {entry.completed ? <div className="flex flex-wrap items-center gap-2"><span className="flex items-center gap-1 text-xs font-semibold text-emerald-800"><Check className="h-4 w-4" />Completed</span>{mayRetract(index) ? <Button icon={<RotateCcw className="h-4 w-4" />} disabled={action.isPending} aria-label={`Retract ${importSteps[index]} completion`} onClick={() => { action.reset(); setEditAfterReopen(undefined); setRetractingStep(index); }}>Retract Completion</Button> : null}</div> : mayMark(index) ? <Button variant="primary" icon={<Check className="h-4 w-4" />} disabled={action.isPending || reasons.length > 0 || index === 8 && (receiptsQuery.isPending || receivingReadiness.isPending || receivingReadiness.isError || !receivingReadiness.data?.ready)} onClick={() => markStep(index)}>{importStepActions[index]}</Button> : <span className="text-xs text-slate-600">{terminal || locked && index < 8 ? "Read-only section" : "Assigned role approval or posting authority required"}</span>}
       </div>
     </div>;
   };
@@ -242,17 +261,16 @@ export default function ImportWorkspacePage() {
       {locked ? (
         <div className="flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
-          <p><strong>Finalized landed cost{record.snapshot ? ` v${record.snapshot.version}` : ""}.</strong> Valuation fields, product quantities and costs are protected. Production and shipment follow-up remain editable until closure. Unreceived costing can be reopened with authority and a reason; posted stock requires a source-linked correction.</p>
+          <p><strong>Finalized landed cost{record.snapshot ? ` v${record.snapshot.version}` : ""}.</strong> {terminal ? "Reopen the case before editing." : received ? "References, dates and follow-up can still be corrected. Retracting review marks does not undo received stock or finalized cost." : "Edit or retract a completed section to correct it. Changes to finalized costing require reopening with a reason; earlier versions are retained."}</p>
         </div>
       ) : null}
-      {locked && receipts.length ? <div className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900"><Warehouse className="mt-0.5 h-4 w-4 shrink-0" /><p><strong>Receipt-backed valuation is protected.</strong> This snapshot cannot be reopened because warehouse stock already inherited it. A future formal valuation adjustment must preserve sold and remaining stock history.</p></div> : null}
 
       <SectionAccordion
         {...sectionProps(0)}
         title="Purchase Order"
         subtitle="Supplier and purchase commitment"
         icon={PackagePlus}
-        actions={<div className="flex items-center">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingStage(0); setModal("commercial"); }} aria-label="Edit purchase order" title="Edit purchase order" /> : null}{backToSteps}</div>}
+        actions={<div className="flex items-center">{canEditFollowUp ? <Button icon={<Pencil className="h-4 w-4" />} onClick={() => beginEdit({ modal: "commercial", stage: 0 })} aria-label="Edit purchase order">Edit</Button> : null}{backToSteps}</div>}
       >
         <dl className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <KeyValue label="Draft Reference" value={record.draftReference} />
@@ -264,13 +282,14 @@ export default function ImportWorkspacePage() {
         </dl>
       </SectionAccordion>
 
-      <SectionAccordion {...sectionProps(1)} title="PI & Products" subtitle="Supplier PI and imported product lines" icon={PackagePlus} status={<span className="text-xs font-bold text-slate-500">{record.items.length} lines</span>} actions={<div className="flex items-center">{canEdit ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingStage(1); setModal("commercial"); }} aria-label="Edit PI details" title="Edit PI details" /> : null}{backToSteps}</div>}>
+      <SectionAccordion {...sectionProps(1)} title="PI & Products" subtitle="Supplier PI and imported product lines" icon={PackagePlus} status={<span className="text-xs font-bold text-slate-500">{record.items.length} lines</span>} actions={<div className="flex items-center">{canEditFollowUp ? <Button icon={<Pencil className="h-4 w-4" />} onClick={() => beginEdit({ modal: "commercial", stage: 1 })} aria-label="Edit PI details">Edit</Button> : null}{backToSteps}</div>}>
         <dl className="grid gap-4 p-4 sm:grid-cols-2"><KeyValue label="PI Number" value={record.piNumber || "Pending supplier PI"} /><KeyValue label="PI Date" value={record.piDate} /></dl>
         <div className="border-t border-slate-200">
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <div><h3 className="text-sm font-bold text-slate-900">Imported products</h3><p className="text-xs text-slate-500">FOB, quantity and CBM are allocation bases.</p></div>
-            {canEdit ? <Button icon={<Plus className="h-4 w-4" />} onClick={() => { setEditingItem(undefined); setModal("item"); }}>Add Product</Button> : null}
+            {canChangeValues ? <Button icon={<Plus className="h-4 w-4" />} onClick={() => beginEdit({ modal: "item", stage: 1 })}>Add Product</Button> : null}
           </div>
+          {received ? <div className="flex flex-wrap items-center justify-between gap-3 border-t border-blue-100 bg-blue-50 p-4 text-sm text-blue-900"><p>Product quantities and valuation are linked to posted warehouse receipts and cannot be overwritten.</p>{foundationMode && hasEffectivePermission(session?.user, "inventory", "view") ? <Button icon={<Warehouse className="h-4 w-4" />} onClick={() => navigate("/backend/inventory/controls")}>Stock Corrections</Button> : null}</div> : null}
           <div className="grid gap-2 border-t border-slate-100 p-3 md:hidden">
             {record.items.map((item) => {
               const master = products.find((product) => product.id === item.productId);
@@ -279,7 +298,7 @@ export default function ImportWorkspacePage() {
                   <div className="flex min-w-0 items-center gap-3">
                     <ProductThumb src={master?.imageUrl} name={item.productName} />
                     <div className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-900">{item.productName}</strong><span className="block text-xs text-slate-500">{item.productCode} | HS {item.hsCode ?? "-"}</span></div>
-                    {canEdit ? <div className="flex shrink-0"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingItem(item); setModal("item"); }} aria-label="Edit product" title="Edit product" /><Button variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} onClick={() => setDeleteItem(item)} aria-label="Delete product" title="Delete product" /></div> : null}
+                    {canChangeValues ? <div className="flex shrink-0"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => beginEdit({ modal: "item", stage: 1, item })} aria-label="Edit product" title="Edit product">Edit</Button><Button variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} disabled={!canEdit} onClick={() => setDeleteItem(item)} aria-label="Delete product" title="Delete product" /></div> : null}
                   </div>
                   <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <KeyValue label="Quantity" value={formatNumber(item.quantity) + " " + item.unit} />
@@ -293,11 +312,11 @@ export default function ImportWorkspacePage() {
           </div>
           <div className="hidden md:block"><TableFrame>
             <table className="min-w-[980px] w-full text-left text-sm">
-              <thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-2.5">Product</th><th className="px-4 py-2.5 text-right">Quantity</th><th className="px-4 py-2.5 text-right">FOB / unit</th><th className="px-4 py-2.5 text-right">FOB BDT</th><th className="px-4 py-2.5 text-right">Cartons</th><th className="px-4 py-2.5 text-right">CBM</th>{canEdit ? <th className="px-4 py-2.5 text-right">Actions</th> : null}</tr></thead>
+              <thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-2.5">Product</th><th className="px-4 py-2.5 text-right">Quantity</th><th className="px-4 py-2.5 text-right">FOB / unit</th><th className="px-4 py-2.5 text-right">FOB BDT</th><th className="px-4 py-2.5 text-right">Cartons</th><th className="px-4 py-2.5 text-right">CBM</th>{canChangeValues ? <th className="px-4 py-2.5 text-right">Actions</th> : null}</tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {record.items.map((item) => {
                   const master = products.find((product) => product.id === item.productId);
-                  return <tr key={item.id}><td className="px-4 py-3"><div className="flex items-center gap-3"><ProductThumb src={master?.imageUrl} name={item.productName} /><div><strong className="block text-slate-900">{item.productName}</strong><small className="text-slate-500">{item.productCode} · HS {item.hsCode ?? "-"}</small></div></div></td><td className="px-4 py-3 text-right font-semibold">{formatNumber(item.quantity)} {item.unit}</td><td className="px-4 py-3 text-right">{canSeeCost ? `${item.currency} ${item.fobUnitForeign}` : "Restricted"}</td><td className="px-4 py-3 text-right font-semibold">{canSeeCost ? formatCurrency(item.fobTotalBdt) : "Restricted"}</td><td className="px-4 py-3 text-right">{formatNumber(item.cartonCount)}</td><td className="px-4 py-3 text-right">{item.totalCbm}</td>{canEdit ? <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingItem(item); setModal("item"); }} aria-label="Edit product" title="Edit product" /><Button variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} onClick={() => setDeleteItem(item)} aria-label="Delete product" title="Delete product" /></div></td> : null}</tr>;
+                  return <tr key={item.id}><td className="px-4 py-3"><div className="flex items-center gap-3"><ProductThumb src={master?.imageUrl} name={item.productName} /><div><strong className="block text-slate-900">{item.productName}</strong><small className="text-slate-500">{item.productCode} · HS {item.hsCode ?? "-"}</small></div></div></td><td className="px-4 py-3 text-right font-semibold">{formatNumber(item.quantity)} {item.unit}</td><td className="px-4 py-3 text-right">{canSeeCost ? `${item.currency} ${item.fobUnitForeign}` : "Restricted"}</td><td className="px-4 py-3 text-right font-semibold">{canSeeCost ? formatCurrency(item.fobTotalBdt) : "Restricted"}</td><td className="px-4 py-3 text-right">{formatNumber(item.cartonCount)}</td><td className="px-4 py-3 text-right">{item.totalCbm}</td>{canChangeValues ? <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => beginEdit({ modal: "item", stage: 1, item })} aria-label="Edit product" title="Edit product">Edit</Button><Button variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} disabled={!canEdit} onClick={() => setDeleteItem(item)} aria-label="Delete product" title="Delete product" /></div></td> : null}</tr>;
                 })}
               </tbody>
             </table>
@@ -305,7 +324,7 @@ export default function ImportWorkspacePage() {
         </div>
       </SectionAccordion>
 
-      {[{ index: 2, title: "LC / TT", subtitle: "Payment reference and exchange-rate snapshot", edit: "Edit payment" }, { index: 3, title: "Production Follow-up", subtitle: "Supplier production status and target timing", edit: "Edit production" }, { index: 4, title: "Shipment", subtitle: "Commercial invoice, carrier and shipment dates", edit: "Edit shipment" }].map(section => <SectionAccordion key={section.index} {...sectionProps(section.index)} title={section.title} subtitle={section.subtitle} icon={Ship} actions={<div className="flex items-center">{(section.index === 2 ? canEdit : canEditFollowUp) ? <Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingStage(section.index); setModal("shipment"); }} aria-label={section.edit} title={section.edit} /> : null}{backToSteps}</div>}>
+      {[{ index: 2, title: "LC / TT", subtitle: "Payment reference and exchange-rate snapshot", edit: "Edit payment" }, { index: 3, title: "Production Follow-up", subtitle: "Supplier production status and target timing", edit: "Edit production" }, { index: 4, title: "Shipment", subtitle: "Commercial invoice, carrier and shipment dates", edit: "Edit shipment" }].map(section => <SectionAccordion key={section.index} {...sectionProps(section.index)} title={section.title} subtitle={section.subtitle} icon={Ship} actions={<div className="flex items-center">{canEditFollowUp ? <Button icon={<Pencil className="h-4 w-4" />} onClick={() => beginEdit({ modal: "shipment", stage: section.index })} aria-label={section.edit}>Edit</Button> : null}{backToSteps}</div>}>
         <ImportLogisticsSummary record={record} stage={section.index} canSeeCost={canSeeCost} />
       </SectionAccordion>)}
 
@@ -334,7 +353,7 @@ export default function ImportWorkspacePage() {
         subtitle="Dynamic cost rows with an explicit allocation basis"
         icon={Banknote}
         status={<StatusBadge status={record.costingStatus} />}
-        actions={<div className="flex items-center">{canEditCost ? <Button variant="ghost" icon={<Plus className="h-4 w-4" />} onClick={() => { setEditingCost(undefined); setModal("cost"); }}>Add Cost</Button> : null}{backToSteps}</div>}
+        actions={<div className="flex items-center">{canChangeCosts ? <Button icon={<Plus className="h-4 w-4" />} onClick={() => beginEdit({ modal: "cost", stage: 6 })}>Add Cost</Button> : null}{backToSteps}</div>}
       >
         {!canSeeCost ? (
           <div className="flex items-start gap-3 bg-amber-50 p-4 text-sm text-amber-900"><LockKeyhole className="mt-0.5 h-5 w-5 shrink-0" /><p><strong>Sensitive cost values are restricted for {session?.user.role}.</strong> Shipment and receiving status remain available without exposing supplier price, landed cost or profit.</p></div>
@@ -345,7 +364,7 @@ export default function ImportWorkspacePage() {
                 <article className="rounded-md border border-slate-200 p-3" key={cost.id}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0"><strong className="block text-sm text-slate-900">{cost.name}</strong><span className="block text-xs text-slate-500">{cost.category}{cost.vendor ? " | " + cost.vendor : ""}</span></div>
-                    {canEditCost ? <div className="flex shrink-0"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingCost(cost); setModal("cost"); }} aria-label="Edit cost" title="Edit cost" /><Button variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} onClick={() => setDeleteCost(cost)} aria-label="Delete cost" title="Delete cost" /></div> : null}
+                    {canChangeCosts ? <div className="flex shrink-0"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => beginEdit({ modal: "cost", stage: 6, cost })} aria-label="Edit cost" title="Edit cost">Edit</Button><Button variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} disabled={!canEditCost} onClick={() => setDeleteCost(cost)} aria-label="Delete cost" title="Delete cost" /></div> : null}
                   </div>
                   <div className="mt-3 flex flex-wrap items-end justify-between gap-2">
                     <div><span className="block text-xs text-slate-500">{cost.currency} {formatNumber(cost.amountForeign)}</span><strong className="block text-sm text-slate-900">{formatCurrency(cost.amountBdt)}</strong></div>
@@ -361,16 +380,14 @@ export default function ImportWorkspacePage() {
             </div>
             <div className="hidden md:block"><TableFrame>
               <table className="min-w-[1050px] w-full text-left text-sm">
-                <thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-2.5">Cost</th><th className="px-4 py-2.5">Foreign / BDT</th><th className="px-4 py-2.5">Allocation</th><th className="px-4 py-2.5">Scope</th><th className="px-4 py-2.5">Payment</th><th className="px-4 py-2.5">Support</th>{canEditCost ? <th className="px-4 py-2.5 text-right">Actions</th> : null}</tr></thead>
+                <thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="px-4 py-2.5">Cost</th><th className="px-4 py-2.5">Foreign / BDT</th><th className="px-4 py-2.5">Allocation</th><th className="px-4 py-2.5">Scope</th><th className="px-4 py-2.5">Payment</th><th className="px-4 py-2.5">Support</th>{canChangeCosts ? <th className="px-4 py-2.5 text-right">Actions</th> : null}</tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {record.costs.map((cost) => <tr key={cost.id}><td className="px-4 py-3"><strong className="block text-slate-900">{cost.name}</strong><small className="text-slate-500">{cost.category}{cost.vendor ? " · " + cost.vendor : ""}</small></td><td className="px-4 py-3"><span className="block">{cost.currency} {formatNumber(cost.amountForeign)}</span><strong className="text-slate-900">{formatCurrency(cost.amountBdt)}</strong></td><td className="px-4 py-3"><span className="rounded bg-cyan-50 px-2 py-1 text-xs font-bold text-cyan-800">{cost.allocationMethod.replace("_", " ")}</span></td><td className="px-4 py-3 text-slate-600">{cost.appliesToItemIds.length ? cost.appliesToItemIds.map((id) => record.items.find((item) => item.id === id)?.productCode).filter(Boolean).join(", ") : "All products"}</td><td className="px-4 py-3 text-slate-600">{cost.paymentDate ?? "Not recorded"}<small className="block text-slate-400">{cost.accountId ?? "-"}</small></td><td className="px-4 py-3">{cost.attachment ? <Button variant="ghost" icon={<Eye className="h-4 w-4" />} onClick={() => setViewingDocument(cost.attachment!)} aria-label={`View ${cost.attachment.fileName}`} title={cost.attachment.fileName}>View</Button> : <span className="text-xs text-slate-400">-</span>}</td>{canEditCost ? <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => { setEditingCost(cost); setModal("cost"); }} aria-label="Edit cost" title="Edit cost" /><Button variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} onClick={() => setDeleteCost(cost)} aria-label="Delete cost" title="Delete cost" /></div></td> : null}</tr>)}
+                  {record.costs.map((cost) => <tr key={cost.id}><td className="px-4 py-3"><strong className="block text-slate-900">{cost.name}</strong><small className="text-slate-500">{cost.category}{cost.vendor ? " · " + cost.vendor : ""}</small></td><td className="px-4 py-3"><span className="block">{cost.currency} {formatNumber(cost.amountForeign)}</span><strong className="text-slate-900">{formatCurrency(cost.amountBdt)}</strong></td><td className="px-4 py-3"><span className="rounded bg-cyan-50 px-2 py-1 text-xs font-bold text-cyan-800">{cost.allocationMethod.replace("_", " ")}</span></td><td className="px-4 py-3 text-slate-600">{cost.appliesToItemIds.length ? cost.appliesToItemIds.map((id) => record.items.find((item) => item.id === id)?.productCode).filter(Boolean).join(", ") : "All products"}</td><td className="px-4 py-3 text-slate-600">{cost.paymentDate ?? "Not recorded"}<small className="block text-slate-400">{cost.accountId ?? "-"}</small></td><td className="px-4 py-3">{cost.attachment ? <Button variant="ghost" icon={<Eye className="h-4 w-4" />} onClick={() => setViewingDocument(cost.attachment!)} aria-label={`View ${cost.attachment.fileName}`} title={cost.attachment.fileName}>View</Button> : <span className="text-xs text-slate-400">-</span>}</td>{canChangeCosts ? <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button variant="ghost" icon={<Pencil className="h-4 w-4" />} onClick={() => beginEdit({ modal: "cost", stage: 6, cost })} aria-label="Edit cost" title="Edit cost">Edit</Button><Button variant="ghost" icon={<Trash2 className="h-4 w-4 text-red-600" />} disabled={!canEditCost} onClick={() => setDeleteCost(cost)} aria-label="Delete cost" title="Delete cost" /></div></td> : null}</tr>)}
                 </tbody>
               </table>
             </TableFrame></div>
             {!record.costs.length ? <p className="p-4 text-sm text-slate-500">No landed-cost rows entered. Operating rent, salary, utilities and TA/DA belong in Expenses & Accounts.</p> : null}
-            <div className="flex justify-end border-t border-slate-200 p-4">
-              <Button variant="primary" icon={<Calculator className="h-4 w-4" />} disabled={previewMutation.isPending || action.isPending || !record.items.length} onClick={() => { selectStep(7); if (!record.snapshot) previewMutation.mutate(); }}>{locked ? "View Landed Cost" : "Review Landed Cost"}</Button>
-            </div>
+            {received ? <p className="border-t border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">These costs are already included in received stock. Retracting the review mark will not change the posted valuation.</p> : null}
           </>
         )}
       </SectionAccordion>
@@ -381,7 +398,7 @@ export default function ImportWorkspacePage() {
         subtitle="Two-decimal cost allocation with exact totals"
         icon={Calculator}
         status={record.snapshot ? <span className="rounded bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">Snapshot v{record.snapshot.version}</span> : undefined}
-        actions={<div className="flex items-center">{canSeeCost ? <Button variant="ghost" icon={<Calculator className="h-4 w-4" />} onClick={() => previewMutation.mutate()} disabled={previewMutation.isPending || !record.items.length}>Preview</Button> : null}{backToSteps}</div>}
+        actions={<div className="flex items-center">{canSeeCost && !locked && !terminal ? <Button variant="primary" icon={<Calculator className="h-4 w-4" />} onClick={() => previewMutation.mutate()} disabled={previewMutation.isPending || !record.items.length}>{preview ? "Recalculate" : "Generate Preview"}</Button> : null}{backToSteps}</div>}
       >
         {!canSeeCost ? (
           <div className="p-4 text-sm text-slate-600">Finalization state: <strong>{record.costingStatus}</strong>. Detailed costs and product margins are owner-only.</div>
@@ -415,9 +432,6 @@ export default function ImportWorkspacePage() {
             </TableFrame></div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 p-4">
               <p className="max-w-2xl text-xs leading-5 text-slate-500">Customs duty is entered as the final assessed amount for each product. The ERP does not invent HS-code duty, VAT or AIT formulas.</p>
-              <div className="flex gap-2">
-                {canReopen ? <Button icon={<RotateCcw className="h-4 w-4" />} onClick={() => setModal("reopen")}>Reopen with Reason</Button> : null}
-              </div>
             </div>
           </div>
         ) : (
@@ -462,7 +476,6 @@ export default function ImportWorkspacePage() {
             <div className="min-w-0"><strong className="block text-sm text-slate-900">{entry.event}</strong><span className="block break-words text-sm text-slate-600">{entry.reference}</span>{entry.by ? <small className="block text-slate-500">{entry.by}</small> : null}</div>
           </li>)}
         </ol>
-        <div className="flex justify-end border-t border-slate-200 p-4"><Button icon={<Warehouse className="h-4 w-4" />} onClick={() => selectStep(8)}>View Warehouse Receipts</Button></div>
       </SectionAccordion>
 
       {modal === "commercial" ? <Modal open title={editingStage === 1 ? "Edit PI details" : "Edit purchase order"} subtitle="Update the same import record." onClose={() => setModal(null)}>{action.isError ? <ErrorBlock error={action.error} title="Commercial data could not be saved" /> : null}<CommercialEditor record={record} busy={action.isPending} requirePi={editingStage === 1} onSubmit={(payload) => action.mutate({ run: () => importService.update(record.id, payload), success: "Commercial data updated" })} /></Modal> : null}
@@ -472,8 +485,7 @@ export default function ImportWorkspacePage() {
       {modal === "document" ? <Modal open title="Attach import document" subtitle="Attach a PDF, image, spreadsheet or document to this import." onClose={() => setModal(null)}>{action.isError ? <ErrorBlock error={action.error} title="Document could not be attached" /> : null}<DocumentEditor busy={action.isPending} onSubmit={(payload) => action.mutate({ run: () => importService.addDocument(record.id, payload), success: "Document attached and ready to view" })} /></Modal> : null}
       {modal === "receive" ? <Modal open title="Receive to warehouse" subtitle="Product and finalized cost are inherited. Enter batch traceability and accepted/rejected quantities." onClose={() => setModal(null)} width="max-w-5xl">{action.isError ? <ErrorBlock error={action.error} title="Receipt could not be posted" /> : null}{receivingReadiness.isError ? <ErrorBlock error={receivingReadiness.error} onRetry={() => void receivingReadiness.refetch()} /> : receivingReadiness.data?.ready ? <ReceiptEditor record={record} receipts={receipts} busy={action.isPending} onSubmit={payload => action.mutate({ run: () => importService.receive(record.id, payload), success: "Warehouse receipt posted and stock batches created", stage: null })} /> : receivingReadiness.data ? <AccountingSetupNotice message={receivingReadiness.data.message} canConfigure={receivingReadiness.data.canConfigure} onSetup={() => { setModal(null); setAccountingSetupOpen(true); }} /> : <LoadingBlock label="Checking posting prerequisites" />}</Modal> : null}
       {accountingSetupOpen ? <LedgerSetupDialog onClose={() => setAccountingSetupOpen(false)} /> : null}
-      {retractingStep !== null ? <Modal open title="Retract completion?" onClose={() => { if (!action.isPending) setRetractingStep(null); }}><p className="text-sm leading-6">Retract {importSteps[retractingStep]} and its later completion marks. Saved fields, product lines and documents stay unchanged. Review them before completing the steps again.</p>{action.isError ? <ErrorBlock error={action.error} /> : null}<div className="mt-4 flex justify-end"><Button variant="primary" disabled={action.isPending} icon={<RotateCcw className="h-4 w-4" />} onClick={() => action.mutate({ run: () => importService.retractStep(record.id, retractingStep), success: "Completion retracted; saved data preserved", stage: retractingStep })}>Retract Completion</Button></div></Modal> : null}
-      {modal === "reopen" ? <ReopenModal busy={action.isPending} onClose={() => setModal(null)} onSubmit={(reason) => action.mutate({ run: () => importService.reopen(record.id, reason), success: "Landed cost reopened with an audit reason" })} /> : null}
+      {retractingStep !== null ? <RetractCompletionDialog step={retractingStep} reopensCost={locked && !received} received={received} editing={Boolean(editAfterReopen)} busy={action.isPending} error={action.error} onClose={() => { if (!action.isPending) { setRetractingStep(null); setEditAfterReopen(undefined); } }} onSubmit={reason => action.mutate({ run: () => importService.retractStep(record.id, retractingStep, reason), success: "Completion retracted; saved data preserved", stage: editAfterReopen?.stage ?? retractingStep, editAfter: editAfterReopen })} /> : null}
       {extraction ? <Modal open title="AI Extracted Fields" subtitle={`${extraction.documentName} | review required; nothing is overwritten automatically.`} onClose={() => setExtraction(null)} width="max-w-3xl"><AIDocumentExtractReview extraction={extraction} busy={action.isPending} onApply={applyExtractedFields} /></Modal> : null}
       <DocumentViewer document={viewingDocument} onClose={() => setViewingDocument(null)} />
 
@@ -645,7 +657,13 @@ function ReceiptFields({ record, receipts, busy, onSubmit, locations }: { record
   </form>;
 }
 
-function ReopenModal({ busy, onClose, onSubmit }: { busy: boolean; onClose: () => void; onSubmit: (reason: string) => void }) {
+function RetractCompletionDialog({ step, reopensCost, received, editing, busy, error, onClose, onSubmit }: { step: number; reopensCost: boolean; received: boolean; editing: boolean; busy: boolean; error?: unknown; onClose: () => void; onSubmit: (reason?: string) => void }) {
   const [reason, setReason] = useState("");
-  return <Modal open title="Reopen finalized landed cost" subtitle="The finalized version stays in history. State why a correction is required." onClose={onClose}><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); onSubmit(reason); }}><label><span className={labelClass}>Required Reason</span><textarea className={textareaClass} minLength={10} required value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Describe the source document or amount that must be corrected" /></label><div className="flex justify-end"><Button type="submit" variant="primary" icon={<RotateCcw className="h-4 w-4" />} disabled={busy || reason.trim().length < 10}>Reopen for Correction</Button></div></form></Modal>;
+  return <Modal open title={editing ? "Reopen for editing" : "Retract completion?"} onClose={onClose}><form className="grid gap-4" onSubmit={event => { event.preventDefault(); onSubmit(reopensCost ? reason.trim() : undefined); }}>
+    <p className="text-sm leading-6">Retract {importSteps[step]} and its later review marks. Saved fields, products and documents stay unchanged.</p>
+    {received ? <p className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">Warehouse receipts and finalized cost remain posted. This reopens the checklist for review, not the stock or financial transactions.</p> : reopensCost ? <p className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Landed cost will reopen for correction. The previous snapshot stays in history. Complete and finalize the corrected case again before receiving.</p> : null}
+    {error ? <ErrorBlock error={error} title="Completion could not be retracted" /> : null}
+    {reopensCost ? <label><span className={labelClass}>Correction reason</span><textarea aria-label="Correction reason" className={textareaClass} minLength={5} maxLength={1000} required value={reason} onChange={event => setReason(event.target.value)} /></label> : null}
+    <div className="flex justify-end"><Button type="submit" variant="primary" icon={<RotateCcw className="h-4 w-4" />} disabled={busy || reopensCost && reason.trim().length < 5}>{editing ? "Reopen and Edit" : "Retract Completion"}</Button></div>
+  </form></Modal>;
 }
